@@ -1,0 +1,116 @@
+#include "sensor_manager.h"
+#include "sensor_config.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "driver/i2c.h"
+#include "esp_log.h"
+#include "esp_random.h"
+#include "esp_timer.h"
+
+static const char *TAG = "SENSOR_MGR";
+
+// I2C 설정
+#define I2C_MASTER_NUM          I2C_NUM_0
+#define I2C_MASTER_TIMEOUT_MS   1000
+
+// 생성자 구현
+SensorManager::SensorManager() : aht20_initialized(false), bmp280_initialized(false) {
+    // 기본 초기화
+}
+
+bool SensorManager::init() {
+    ESP_LOGI(TAG, "SensorManager 초기화 중...");
+    
+    // I2C 초기화
+    i2c_config_t conf = {
+        .mode = I2C_MODE_MASTER,
+        .sda_io_num = I2C_SDA_PIN,
+        .scl_io_num = I2C_SCL_PIN,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master = {
+            .clk_speed = 100000,
+        },
+        .clk_flags = 0,
+    };
+    
+    esp_err_t ret = i2c_param_config(I2C_MASTER_NUM, &conf);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "I2C 파라미터 설정 실패: %s", esp_err_to_name(ret));
+        return false;
+    }
+    
+    ret = i2c_driver_install(I2C_MASTER_NUM, conf.mode, 0, 0, 0);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "I2C 드라이버 설치 실패: %s", esp_err_to_name(ret));
+        return false;
+    }
+    
+    ESP_LOGI(TAG, "I2C 초기화 완료 - SDA: GPIO%d, SCL: GPIO%d", I2C_SDA_PIN, I2C_SCL_PIN);
+    
+    // 센서 스캔
+    ESP_LOGI(TAG, "I2C 센서 스캔...");
+    for (uint8_t addr = 1; addr < 127; addr++) {
+        i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+        i2c_master_start(cmd);
+        i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, true);
+        i2c_master_stop(cmd);
+        
+        esp_err_t ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, pdMS_TO_TICKS(50));
+        i2c_cmd_link_delete(cmd);
+        
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "센서 발견: 0x%02X", addr);
+            
+            if (addr == 0x38) {
+                aht20_initialized = true;
+                ESP_LOGI(TAG, "  -> AHT20 감지됨");
+            }
+            if (addr == 0x76 || addr == 0x77) {
+                bmp280_initialized = true;
+                ESP_LOGI(TAG, "  -> BMP280 감지됨");
+            }
+        }
+    }
+    
+    return (aht20_initialized || bmp280_initialized);
+}
+
+SensorData SensorManager::readAllSensors() {
+    SensorData data = {};  // 모든 필드를 0으로 초기화
+    data.timestamp = esp_timer_get_time() / 1000;  // microseconds to milliseconds
+    data.aht20_available = aht20_initialized;
+    data.bmp280_available = bmp280_initialized;
+    
+    if (aht20_initialized) {
+        // 임시 더미 데이터 (랜덤)
+        data.temperature_aht20 = 23.5 + ((esp_random() % 20) - 10) / 10.0;
+        data.humidity_aht20 = 65.0 + ((esp_random() % 100) - 50) / 10.0;
+    }
+    
+    if (bmp280_initialized) {
+        // 임시 더미 데이터 (랜덤)
+        data.temperature_bmp280 = 23.3 + ((esp_random() % 20) - 10) / 10.0;
+        data.pressure_bmp280 = 1013.25 + ((esp_random() % 40) - 20) / 10.0;
+    }
+    
+    return data;
+}
+
+bool SensorManager::hasWorkingSensors() const {
+    return (aht20_initialized || bmp280_initialized);
+}
+
+uint8_t SensorManager::getWorkingSensorCount() const {
+    uint8_t count = 0;
+    if (aht20_initialized) count++;
+    if (bmp280_initialized) count++;
+    return count;
+}
+
+void SensorManager::diagnoseSensors(const SensorData &data) {
+    ESP_LOGI(TAG, "센서 진단:");
+    ESP_LOGI(TAG, "  AHT20: %s", data.aht20_available ? "정상" : "오프라인");
+    ESP_LOGI(TAG, "  BMP280: %s", data.bmp280_available ? "정상" : "오프라인");
+    ESP_LOGI(TAG, "  작동 센서: %d개", this->getWorkingSensorCount());
+}
