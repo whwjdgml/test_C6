@@ -5,8 +5,8 @@
 #include "driver/gpio.h"
 
 // I2C 핀 설정
-#define I2C_SDA_PIN GPIO_NUM_6
-#define I2C_SCL_PIN GPIO_NUM_7
+#define I2C_SDA_PIN GPIO_NUM_4 // GPIO4 (SDA)
+#define I2C_SCL_PIN GPIO_NUM_5 // GPIO5 (SCL)
 
 // AHT20 설정
 #define AHT20_ADDR 0x38

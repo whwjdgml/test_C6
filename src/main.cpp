@@ -63,7 +63,7 @@ void printSensorData(const SensorData &data) {
         ESP_LOGI(TAG, "║ BMP280      │ ❌ 오프라인                       ║");
     }
     
-    ESP_LOGI(TAG, "║ 측정 시간   │ %lu초                            ║", data.timestamp / 1000);
+    ESP_LOGI(TAG, "측정 시간: %llu초", data.timestamp / 1000);
     ESP_LOGI(TAG, "╚═══════════════════════════════════════════════════╝");
 }
 
@@ -103,6 +103,8 @@ extern "C" void app_main() {
         
         // 진단
         sensorManager->diagnoseSensors(sensor_data);
+        ESP_LOGI(TAG, "I2C 드라이버 상태 확인...");
+        ESP_LOGI(TAG, "SDA: GPIO%d, SCL: GPIO%d", I2C_SDA_PIN, I2C_SCL_PIN);
         
         // 5초 대기
         vTaskDelay(pdMS_TO_TICKS(MEASUREMENT_INTERVAL_MS));
