@@ -22,6 +22,9 @@ public:
     
     // 자동 캘리브레이션 설정
     bool setAutomaticSelfCalibration(bool enable);
+
+    // 자동 캘리브레이션 상태 읽기
+    bool getAutomaticSelfCalibration(bool* enabled);
     
     // 강제 재캘리브레이션
     bool performForcedRecalibration(uint16_t co2_reference);

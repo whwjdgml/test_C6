@@ -28,18 +28,24 @@ SCD41Sensor::SCD41Sensor() : initialized_(false) {
 bool SCD41Sensor::init() {
     ESP_LOGI(TAG, "SCD41 센서 초기화 시작...");
 
-    // 1. 먼저 이전 측정 상태를 중지시켜 센서를 안정적인 상태로 만듭니다.
-    //    (처음 전원을 켤 때는 실패하는 것이 정상일 수 있습니다.)
+    // 1. 먼저 이전 측정 상태를 중지시켜 센서를 안정적인 IDLE 상태로 만듭니다.
+    //    (처음 전원을 켤 때는 실패하는 것이 정상이므로 반환값은 무시합니다.)
     stopPeriodicMeasurement();
     vTaskDelay(pdMS_TO_TICKS(500)); // 데이터시트 권장 대기 시간 (500ms)
 
-    // 2. 주기적 측정을 시작합니다.
+    // 2. 장기적인 정확도를 위해 자동 자가 보정(ASC)을 활성화합니다.
+    //    이 설정은 센서의 비휘발성 메모리에 저장됩니다.
+    if (!setAutomaticSelfCalibration(true)) {
+        ESP_LOGW(TAG, "자동 캘리브레이션(ASC) 설정에 실패했습니다. (계속 진행)");
+    }
+
+    // 3. 주기적 측정을 시작합니다.
     if (!startPeriodicMeasurement()) {
         ESP_LOGE(TAG, "주기적 측정 시작 실패");
         return false;
     }
 
-    // 3. 첫 데이터가 준비될 때까지 대기합니다.
+    // 4. 첫 데이터가 준비될 때까지 대기합니다.
     ESP_LOGI(TAG, "첫 번째 측정 완료 대기 중... (약 5초)");
     vTaskDelay(pdMS_TO_TICKS(5000));
 
@@ -101,6 +107,28 @@ bool SCD41Sensor::setAutomaticSelfCalibration(bool enable) {
 
 bool SCD41Sensor::performForcedRecalibration(uint16_t co2_reference) {
     return sendCommandWithArg(SCD41_CMD_PERFORM_FORCED_RECAL, co2_reference);
+}
+
+bool SCD41Sensor::getAutomaticSelfCalibration(bool* enabled) {
+    uint8_t buffer[3];
+    
+    if (!sendCommand(SCD41_CMD_GET_AUTOMATIC_SELF_CAL)) {
+        return false;
+    }
+    
+    vTaskDelay(pdMS_TO_TICKS(1)); // 짧은 대기
+    
+    if (!readResponse(buffer, 3)) {
+        return false;
+    }
+    
+    if (calculateCRC8(buffer, 2) != buffer[2]) {
+        ESP_LOGE(TAG, "ASC 상태 읽기 CRC 오류");
+        return false;
+    }
+    
+    *enabled = ((buffer[0] << 8) | buffer[1]) == 0x0001;
+    return true;
 }
 
 bool SCD41Sensor::startPeriodicMeasurement() {

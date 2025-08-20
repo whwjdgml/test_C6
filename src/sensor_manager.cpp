@@ -235,6 +235,11 @@ void SensorManager::diagnoseSensors(const SensorData &data) {
     if (data.scd41_available) {
         ESP_LOGI(TAG, "SCD41 values: CO2=%.0fppm, temp=%.2f°C, hum=%.2f%%", 
                 data.co2_scd41, data.temperature_scd41, data.humidity_scd41);
+        
+        bool asc_enabled;
+        if (scd41_sensor && scd41_sensor->getAutomaticSelfCalibration(&asc_enabled)) {
+            ESP_LOGI(TAG, "SCD41 Auto-Calibration (ASC): %s", asc_enabled ? "ENABLED" : "DISABLED (Low Power Mode)");
+        }
     }
 
     if (data.sgp40_available) {
