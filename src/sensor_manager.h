@@ -7,6 +7,7 @@
 // Forward declarations
 class AHT20Sensor;
 class BMP280Sensor;
+class SCD41Sensor;
 
 class SensorManager {
 public:
@@ -22,10 +23,12 @@ private:
     // 센서 객체들
     AHT20Sensor* aht20_sensor;
     BMP280Sensor* bmp280_sensor;
+    SCD41Sensor* scd41_sensor;
     
     // 초기화 상태
     bool aht20_initialized;
     bool bmp280_initialized;
+    bool scd41_initialized;
 };
 
 #endif

@@ -23,13 +23,23 @@ struct BMP280CalibData {
 
 // 센서 데이터 구조체
 struct SensorData {
+    // AHT20 데이터
     float temperature_aht20;
     float humidity_aht20;
+    bool aht20_available;
+    
+    // BMP280 데이터
     float temperature_bmp280;
     float pressure_bmp280;
     float altitude_bmp280;
-    bool aht20_available;
     bool bmp280_available;
+    
+    // SCD41 데이터
+    float co2_scd41;
+    float temperature_scd41;
+    float humidity_scd41;
+    bool scd41_available;
+    
     uint64_t timestamp;
 };
 

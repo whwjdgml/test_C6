@@ -64,6 +64,15 @@ void printSensorData(const SensorData &data) {
         ESP_LOGI(TAG, "║ BMP280      │ ❌ 오프라인                       ║");
     }
     
+    if (data.scd41_available) {
+        ESP_LOGI(TAG, "║ SCD41       │ CO2: %5.0fppm  온도: %6.2f°C  ║", 
+                data.co2_scd41, data.temperature_scd41);
+        ESP_LOGI(TAG, "║             │ 습도: %6.2f%%                  ║", 
+                data.humidity_scd41);
+    } else {
+        ESP_LOGI(TAG, "║ SCD41       │ ❌ 오프라인                       ║");
+    }
+    
     ESP_LOGI(TAG, "║ 측정 시간   │ %llu초                            ║", data.timestamp / 1000);
     ESP_LOGI(TAG, "╚═══════════════════════════════════════════════════╝");
 }
@@ -85,12 +94,20 @@ extern "C" void app_main() {
     sensorManager = new SensorManager();
     
     // 센서 초기화 - 여기서 상세한 I2C 스캔이 실행됩니다
-    ESP_LOGI(TAG, "센서 초기화 시작...");
+    ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "🔧 센서 초기화 시작...");
+    ESP_LOGI(TAG, "════════════════════════════════════════");
+    
     bool init_success = sensorManager->init();
     
+    ESP_LOGI(TAG, "════════════════════════════════════════");
     if (!init_success) {
         ESP_LOGE(TAG, "❌ 센서 초기화 실패!");
-        ESP_LOGE(TAG, "하드웨어 연결을 확인하고 다시 시도하세요.");
+        ESP_LOGE(TAG, "SensorManager::init() 함수에서 false 반환됨");
+        ESP_LOGE(TAG, "가능한 원인:");
+        ESP_LOGE(TAG, "  1. I2C 드라이버 설치 실패");
+        ESP_LOGE(TAG, "  2. I2C 버스에서 센서를 찾을 수 없음");
+        ESP_LOGE(TAG, "  3. 하드웨어 연결 문제");
         
         // 초기화 실패해도 계속 진행 (디버깅 목적)
         ESP_LOGW(TAG, "초기화 실패했지만 계속 진행합니다 (디버깅 모드)");

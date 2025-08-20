@@ -2,6 +2,7 @@
 #include "sensor_config.h"
 #include "aht20_sensor.h"
 #include "bmp280_sensor.h"
+#include "scd41_sensor.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/i2c.h"
@@ -10,15 +11,14 @@
 
 static const char *TAG = "SENSOR_MGR";
 
-// I2C 설정
 #define I2C_MASTER_NUM          I2C_NUM_0
 #define I2C_MASTER_TIMEOUT_MS   1000
 
-// 생성자 구현
-SensorManager::SensorManager() : aht20_sensor(nullptr), bmp280_sensor(nullptr), aht20_initialized(false), bmp280_initialized(false) {
-    // 센서 객체 생성
+SensorManager::SensorManager() : aht20_sensor(nullptr), bmp280_sensor(nullptr), scd41_sensor(nullptr), 
+                                 aht20_initialized(false), bmp280_initialized(false), scd41_initialized(false) {
     aht20_sensor = new AHT20Sensor();
     bmp280_sensor = new BMP280Sensor();
+    scd41_sensor = new SCD41Sensor();
 }
 
 SensorManager::~SensorManager() {
@@ -28,98 +28,103 @@ SensorManager::~SensorManager() {
     if (bmp280_sensor) {
         delete bmp280_sensor;
     }
+    if (scd41_sensor) {
+        delete scd41_sensor;
+    }
 }
 
 bool SensorManager::init() {
-    ESP_LOGI(TAG, "SensorManager 초기화 중...");
-    ESP_LOGI(TAG, "설정된 I2C 핀: SDA=GPIO%d, SCL=GPIO%d", I2C_SDA_PIN, I2C_SCL_PIN);
+    ESP_LOGI(TAG, "SensorManager initializing...");
+    ESP_LOGI(TAG, "I2C pins: SDA=GPIO%d, SCL=GPIO%d", I2C_SDA_PIN, I2C_SCL_PIN);
     
-    // 기존 I2C 드라이버가 있다면 제거
-    ESP_LOGI(TAG, "기존 I2C 드라이버 정리 중...");
     i2c_driver_delete(I2C_MASTER_NUM);
-    vTaskDelay(pdMS_TO_TICKS(100)); // 100ms 대기
+    vTaskDelay(pdMS_TO_TICKS(100));
     
-    // I2C 설정
     i2c_config_t conf = {};
     conf.mode = I2C_MODE_MASTER;
-    conf.sda_io_num = I2C_SDA_PIN;          // GPIO22
-    conf.scl_io_num = I2C_SCL_PIN;          // GPIO23
+    conf.sda_io_num = I2C_SDA_PIN;
+    conf.scl_io_num = I2C_SCL_PIN;
     conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
     conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
-    conf.master.clk_speed = 100000;         // 100kHz
+    conf.master.clk_speed = 100000;
     conf.clk_flags = 0;
-    
-    ESP_LOGI(TAG, "I2C 파라미터 설정 중... SDA=%d, SCL=%d", conf.sda_io_num, conf.scl_io_num);
     
     esp_err_t ret = i2c_param_config(I2C_MASTER_NUM, &conf);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "I2C 파라미터 설정 실패: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "I2C param config failed: %s", esp_err_to_name(ret));
         return false;
     }
     
-    ESP_LOGI(TAG, "I2C 드라이버 설치 중...");
     ret = i2c_driver_install(I2C_MASTER_NUM, conf.mode, 0, 0, 0);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "I2C 드라이버 설치 실패: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "I2C driver install failed: %s", esp_err_to_name(ret));
         return false;
     }
     
-    ESP_LOGI(TAG, "I2C 초기화 완료");
-    
-    // 센서 초기화 대기
+    ESP_LOGI(TAG, "I2C initialized successfully");
     vTaskDelay(pdMS_TO_TICKS(200));
     
-    // AHT20 센서 초기화 시도
-    ESP_LOGI(TAG, "AHT20 센서 초기화 시도...");
+    // Initialize AHT20
+    ESP_LOGI(TAG, "Initializing AHT20...");
     if (aht20_sensor && aht20_sensor->init()) {
         aht20_initialized = true;
-        ESP_LOGI(TAG, "AHT20 센서 초기화 성공");
+        ESP_LOGI(TAG, "AHT20 initialization successful");
     } else {
-        ESP_LOGW(TAG, "AHT20 센서 초기화 실패");
+        ESP_LOGW(TAG, "AHT20 initialization failed");
     }
     
-    // BMP280 센서 초기화 시도
-    ESP_LOGI(TAG, "BMP280 센서 초기화 시도...");
+    // Initialize BMP280
+    ESP_LOGI(TAG, "Initializing BMP280...");
     if (bmp280_sensor && bmp280_sensor->init()) {
         bmp280_initialized = true;
-        ESP_LOGI(TAG, "BMP280 센서 초기화 성공 (주소: 0x%02X)", bmp280_sensor->getAddress());
+        ESP_LOGI(TAG, "BMP280 initialization successful (addr: 0x%02X)", bmp280_sensor->getAddress());
     } else {
-        ESP_LOGW(TAG, "BMP280 센서 초기화 실패");
+        ESP_LOGW(TAG, "BMP280 initialization failed");
     }
     
-    // 결과 요약
+    // Initialize SCD41
+    ESP_LOGI(TAG, "Initializing SCD41...");
+    if (scd41_sensor && scd41_sensor->init()) {
+        scd41_initialized = true;
+        ESP_LOGI(TAG, "SCD41 initialization successful");
+    } else {
+        ESP_LOGW(TAG, "SCD41 initialization failed");
+    }
+    
     uint8_t working_sensors = getWorkingSensorCount();
     if (working_sensors > 0) {
-        ESP_LOGI(TAG, "센서 매니저 초기화 완료! 작동 센서: %d개", working_sensors);
-        if (aht20_initialized) ESP_LOGI(TAG, "   - AHT20: 온도/습도 센서");
-        if (bmp280_initialized) ESP_LOGI(TAG, "   - BMP280: 기압/온도 센서");
+        ESP_LOGI(TAG, "SensorManager initialization complete! Working sensors: %d", working_sensors);
+        if (aht20_initialized) ESP_LOGI(TAG, "   - AHT20: temp/humidity sensor");
+        if (bmp280_initialized) ESP_LOGI(TAG, "   - BMP280: pressure/temp sensor");
+        if (scd41_initialized) ESP_LOGI(TAG, "   - SCD41: CO2/temp/humidity sensor");
     } else {
-        ESP_LOGE(TAG, "센서 매니저 초기화 실패 - 사용 가능한 센서가 없음");
+        ESP_LOGE(TAG, "SensorManager initialization failed - no working sensors");
     }
     
     return (working_sensors > 0);
 }
 
 SensorData SensorManager::readAllSensors() {
-    SensorData data = {};  // 모든 필드를 0으로 초기화
-    data.timestamp = esp_timer_get_time() / 1000;  // microseconds to milliseconds
+    SensorData data = {};
+    data.timestamp = esp_timer_get_time() / 1000;
     data.aht20_available = false;
     data.bmp280_available = false;
+    data.scd41_available = false;
     
-    // AHT20 데이터 읽기
+    // Read AHT20 data
     if (aht20_initialized && aht20_sensor) {
         float temp, hum;
         if (aht20_sensor->readData(&temp, &hum)) {
             data.temperature_aht20 = temp;
             data.humidity_aht20 = hum;
             data.aht20_available = true;
-            ESP_LOGD(TAG, "AHT20 읽기 성공: 온도=%.2f°C, 습도=%.2f%%", temp, hum);
+            ESP_LOGD(TAG, "AHT20 read success: temp=%.2f°C, hum=%.2f%%", temp, hum);
         } else {
-            ESP_LOGW(TAG, "AHT20 데이터 읽기 실패");
+            ESP_LOGW(TAG, "AHT20 data read failed");
         }
     }
     
-    // BMP280 데이터 읽기 (실제 구현)
+    // Read BMP280 data
     if (bmp280_initialized && bmp280_sensor) {
         float temp, press, alt;
         if (bmp280_sensor->readData(&temp, &press, &alt)) {
@@ -127,9 +132,23 @@ SensorData SensorManager::readAllSensors() {
             data.pressure_bmp280 = press;
             data.altitude_bmp280 = alt;
             data.bmp280_available = true;
-            ESP_LOGD(TAG, "BMP280 읽기 성공: 온도=%.2f°C, 기압=%.2fhPa, 고도=%.2fm", temp, press, alt);
+            ESP_LOGD(TAG, "BMP280 read success: temp=%.2f°C, press=%.2fhPa, alt=%.2fm", temp, press, alt);
         } else {
-            ESP_LOGW(TAG, "BMP280 데이터 읽기 실패");
+            ESP_LOGW(TAG, "BMP280 data read failed");
+        }
+    }
+    
+    // Read SCD41 data
+    if (scd41_initialized && scd41_sensor) {
+        float co2, temp, hum;
+        if (scd41_sensor->readData(&co2, &temp, &hum)) {
+            data.co2_scd41 = co2;
+            data.temperature_scd41 = temp;
+            data.humidity_scd41 = hum;
+            data.scd41_available = true;
+            ESP_LOGD(TAG, "SCD41 read success: CO2=%.0fppm, temp=%.2f°C, hum=%.2f%%", co2, temp, hum);
+        } else {
+            ESP_LOGW(TAG, "SCD41 data read failed");
         }
     }
     
@@ -137,45 +156,97 @@ SensorData SensorManager::readAllSensors() {
 }
 
 bool SensorManager::hasWorkingSensors() const {
-    return (aht20_initialized || bmp280_initialized);
+    return (aht20_initialized || bmp280_initialized || scd41_initialized);
 }
 
 uint8_t SensorManager::getWorkingSensorCount() const {
     uint8_t count = 0;
     if (aht20_initialized) count++;
     if (bmp280_initialized) count++;
+    if (scd41_initialized) count++;
     return count;
 }
 
 void SensorManager::diagnoseSensors(const SensorData &data) {
-    ESP_LOGI(TAG, "센서 진단 결과:");
+    ESP_LOGI(TAG, "Sensor diagnostics:");
     ESP_LOGI(TAG, "AHT20: %s %s", 
-             data.aht20_available ? "정상" : "오프라인",
-             data.aht20_available ? "(온도/습도)" : "");
+             data.aht20_available ? "OK" : "OFFLINE",
+             data.aht20_available ? "(temp/humidity)" : "");
     
     ESP_LOGI(TAG, "BMP280: %s %s", 
-             data.bmp280_available ? "정상" : "오프라인",
-             data.bmp280_available ? "(기압/온도)" : "");
+             data.bmp280_available ? "OK" : "OFFLINE",
+             data.bmp280_available ? "(pressure/temp)" : "");
     
-    ESP_LOGI(TAG, "전체 작동 센서: %d개", this->getWorkingSensorCount());
+    ESP_LOGI(TAG, "SCD41: %s %s", 
+             data.scd41_available ? "OK" : "OFFLINE",
+             data.scd41_available ? "(CO2/temp/humidity)" : "");
+    
+    ESP_LOGI(TAG, "Total working sensors: %d", this->getWorkingSensorCount());
     
     if (data.aht20_available) {
-        ESP_LOGI(TAG, "AHT20 값: 온도=%.2f°C, 습도=%.2f%%", 
+        ESP_LOGI(TAG, "AHT20 values: temp=%.2f°C, hum=%.2f%%", 
                 data.temperature_aht20, data.humidity_aht20);
     }
     
     if (data.bmp280_available) {
-        ESP_LOGI(TAG, "BMP280 값: 온도=%.2f°C, 기압=%.2fhPa, 고도=%.2fm", 
+        ESP_LOGI(TAG, "BMP280 values: temp=%.2f°C, press=%.2fhPa, alt=%.2fm", 
                 data.temperature_bmp280, data.pressure_bmp280, data.altitude_bmp280);
     }
     
-    // 온도 비교 (두 센서 모두 사용 가능할 때)
-    if (data.aht20_available && data.bmp280_available) {
-        float temp_diff = data.temperature_aht20 - data.temperature_bmp280;
-        ESP_LOGI(TAG, "온도 차이: %.2f°C (AHT20 - BMP280)", temp_diff);
+    if (data.scd41_available) {
+        ESP_LOGI(TAG, "SCD41 values: CO2=%.0fppm, temp=%.2f°C, hum=%.2f%%", 
+                data.co2_scd41, data.temperature_scd41, data.humidity_scd41);
+    }
+    
+    // Temperature comparison analysis
+    int temp_sensors = 0;
+    float temp_total = 0;
+    
+    if (data.aht20_available) {
+        temp_total += data.temperature_aht20;
+        temp_sensors++;
+    }
+    
+    if (data.bmp280_available) {
+        temp_total += data.temperature_bmp280;
+        temp_sensors++;
+    }
+    
+    if (data.scd41_available) {
+        temp_total += data.temperature_scd41;
+        temp_sensors++;
+    }
+    
+    if (temp_sensors >= 2) {
+        float avg_temp = temp_total / temp_sensors;
+        ESP_LOGI(TAG, "Temperature average: %.2f°C (%d sensors)", avg_temp, temp_sensors);
         
-        if (abs(temp_diff) > 5.0) {
-            ESP_LOGW(TAG, "온도 차이가 큽니다. 센서 위치나 환경을 확인하세요.");
+        if (data.aht20_available && data.bmp280_available) {
+            float diff_aht_bmp = data.temperature_aht20 - data.temperature_bmp280;
+            ESP_LOGI(TAG, "Temp diff (AHT20-BMP280): %.2f°C", diff_aht_bmp);
+        }
+        
+        if (data.aht20_available && data.scd41_available) {
+            float diff_aht_scd = data.temperature_aht20 - data.temperature_scd41;
+            ESP_LOGI(TAG, "Temp diff (AHT20-SCD41): %.2f°C", diff_aht_scd);
+        }
+        
+        if (data.bmp280_available && data.scd41_available) {
+            float diff_bmp_scd = data.temperature_bmp280 - data.temperature_scd41;
+            ESP_LOGI(TAG, "Temp diff (BMP280-SCD41): %.2f°C", diff_bmp_scd);
+        }
+    }
+    
+    // CO2 level analysis
+    if (data.scd41_available) {
+        if (data.co2_scd41 < 800) {
+            ESP_LOGI(TAG, "CO2 level: Good (%.0fppm)", data.co2_scd41);
+        } else if (data.co2_scd41 < 1000) {
+            ESP_LOGW(TAG, "CO2 level: Moderate (%.0fppm)", data.co2_scd41);
+        } else if (data.co2_scd41 < 1500) {
+            ESP_LOGW(TAG, "CO2 level: Poor (%.0fppm)", data.co2_scd41);
+        } else {
+            ESP_LOGE(TAG, "CO2 level: Very poor (%.0fppm)", data.co2_scd41);
         }
     }
 }

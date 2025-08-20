@@ -15,6 +15,9 @@
 #define BMP280_ADDR_0 0x76
 #define BMP280_ADDR_1 0x77
 
+// SCD41 설정
+#define SCD41_ADDR 0x62
+
 // 측정 간격
 #define MEASUREMENT_INTERVAL_MS 5000
 
