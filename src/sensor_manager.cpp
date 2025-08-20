@@ -3,6 +3,7 @@
 #include "aht20_sensor.h"
 #include "bmp280_sensor.h"
 #include "scd41_sensor.h"
+#include "sgp40_sensor.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/i2c.h"
@@ -15,30 +16,19 @@ static const char *TAG = "SENSOR_MGR";
 #define I2C_MASTER_TIMEOUT_MS   1000
 
 SensorManager::SensorManager() : aht20_sensor(nullptr), bmp280_sensor(nullptr), scd41_sensor(nullptr), 
-                                 aht20_initialized(false), bmp280_initialized(false), scd41_initialized(false) {
-    aht20_sensor = new AHT20Sensor();
-    bmp280_sensor = new BMP280Sensor();
-    scd41_sensor = new SCD41Sensor();
+                                 aht20_initialized(false), bmp280_initialized(false), scd41_initialized(false), sgp40_initialized(false) 
+{
+    aht20_sensor = std::make_unique<AHT20Sensor>();
+    bmp280_sensor = std::make_unique<BMP280Sensor>();
+    scd41_sensor = std::make_unique<SCD41Sensor>();
+    sgp40_sensor = std::make_unique<SGP40Sensor>();
 }
 
-SensorManager::~SensorManager() {
-    if (aht20_sensor) {
-        delete aht20_sensor;
-    }
-    if (bmp280_sensor) {
-        delete bmp280_sensor;
-    }
-    if (scd41_sensor) {
-        delete scd41_sensor;
-    }
-}
+SensorManager::~SensorManager() = default; // 스마트 포인터가 자동으로 메모리를 해제합니다.
 
 bool SensorManager::init() {
     ESP_LOGI(TAG, "SensorManager initializing...");
     ESP_LOGI(TAG, "I2C pins: SDA=GPIO%d, SCL=GPIO%d", I2C_SDA_PIN, I2C_SCL_PIN);
-    
-    i2c_driver_delete(I2C_MASTER_NUM);
-    vTaskDelay(pdMS_TO_TICKS(100));
     
     i2c_config_t conf = {};
     conf.mode = I2C_MODE_MASTER;
@@ -91,12 +81,22 @@ bool SensorManager::init() {
         ESP_LOGW(TAG, "SCD41 initialization failed");
     }
     
+    // Initialize SGP40
+    ESP_LOGI(TAG, "Initializing SGP40...");
+    if (sgp40_sensor && sgp40_sensor->init()) {
+        sgp40_initialized = true;
+        ESP_LOGI(TAG, "SGP40 initialization successful");
+    } else {
+        ESP_LOGW(TAG, "SGP40 initialization failed");
+    }
+    
     uint8_t working_sensors = getWorkingSensorCount();
     if (working_sensors > 0) {
         ESP_LOGI(TAG, "SensorManager initialization complete! Working sensors: %d", working_sensors);
         if (aht20_initialized) ESP_LOGI(TAG, "   - AHT20: temp/humidity sensor");
         if (bmp280_initialized) ESP_LOGI(TAG, "   - BMP280: pressure/temp sensor");
         if (scd41_initialized) ESP_LOGI(TAG, "   - SCD41: CO2/temp/humidity sensor");
+        if (sgp40_initialized) ESP_LOGI(TAG, "   - SGP40: VOC Index sensor");
     } else {
         ESP_LOGE(TAG, "SensorManager initialization failed - no working sensors");
     }
@@ -110,6 +110,7 @@ SensorData SensorManager::readAllSensors() {
     data.aht20_available = false;
     data.bmp280_available = false;
     data.scd41_available = false;
+    data.sgp40_available = false;
     
     // Read AHT20 data
     if (aht20_initialized && aht20_sensor) {
@@ -152,11 +153,44 @@ SensorData SensorManager::readAllSensors() {
         }
     }
     
+    // Read SGP40 data (needs temp/hum for compensation)
+    if (sgp40_initialized && sgp40_sensor) {
+        float comp_temp, comp_hum;
+        bool comp_available = false;
+        const char* comp_source = "N/A";
+
+        // Prioritize SCD41 for compensation data, fallback to AHT20
+        if (data.scd41_available) {
+            comp_temp = data.temperature_scd41;
+            comp_hum = data.humidity_scd41;
+            comp_available = true;
+            comp_source = "SCD41";
+        } else if (data.aht20_available) {
+            comp_temp = data.temperature_aht20;
+            comp_hum = data.humidity_aht20;
+            comp_available = true;
+            comp_source = "AHT20";
+        }
+
+        if (comp_available) {
+            float voc_index;
+            if (sgp40_sensor->readData(&voc_index, comp_hum, comp_temp)) {
+                data.voc_index_sgp40 = voc_index;
+                data.sgp40_available = true;
+                ESP_LOGD(TAG, "SGP40 read success: VOC Index=%.0f (comp from %s T:%.1f, H:%.1f)", voc_index, comp_source, comp_temp, comp_hum);
+            } else {
+                ESP_LOGW(TAG, "SGP40 data read failed");
+            }
+        } else {
+            ESP_LOGW(TAG, "SGP40 read skipped: no compensation data available");
+        }
+    }
+    
     return data;
 }
 
 bool SensorManager::hasWorkingSensors() const {
-    return (aht20_initialized || bmp280_initialized || scd41_initialized);
+    return (aht20_initialized || bmp280_initialized || scd41_initialized || sgp40_initialized);
 }
 
 uint8_t SensorManager::getWorkingSensorCount() const {
@@ -164,6 +198,7 @@ uint8_t SensorManager::getWorkingSensorCount() const {
     if (aht20_initialized) count++;
     if (bmp280_initialized) count++;
     if (scd41_initialized) count++;
+    if (sgp40_initialized) count++;
     return count;
 }
 
@@ -181,6 +216,10 @@ void SensorManager::diagnoseSensors(const SensorData &data) {
              data.scd41_available ? "OK" : "OFFLINE",
              data.scd41_available ? "(CO2/temp/humidity)" : "");
     
+    ESP_LOGI(TAG, "SGP40: %s %s", 
+             data.sgp40_available ? "OK" : "OFFLINE",
+             data.sgp40_available ? "(VOC Index)" : "");
+    
     ESP_LOGI(TAG, "Total working sensors: %d", this->getWorkingSensorCount());
     
     if (data.aht20_available) {
@@ -196,6 +235,11 @@ void SensorManager::diagnoseSensors(const SensorData &data) {
     if (data.scd41_available) {
         ESP_LOGI(TAG, "SCD41 values: CO2=%.0fppm, temp=%.2f°C, hum=%.2f%%", 
                 data.co2_scd41, data.temperature_scd41, data.humidity_scd41);
+    }
+
+    if (data.sgp40_available) {
+        ESP_LOGI(TAG, "SGP40 values: VOC Index=%.0f", 
+                data.voc_index_sgp40);
     }
     
     // Temperature comparison analysis
@@ -247,6 +291,19 @@ void SensorManager::diagnoseSensors(const SensorData &data) {
             ESP_LOGW(TAG, "CO2 level: Poor (%.0fppm)", data.co2_scd41);
         } else {
             ESP_LOGE(TAG, "CO2 level: Very poor (%.0fppm)", data.co2_scd41);
+        }
+    }
+
+    // VOC level analysis
+    if (data.sgp40_available) {
+        if (data.voc_index_sgp40 < 100) {
+            ESP_LOGI(TAG, "VOC Index: Excellent (%.0f)", data.voc_index_sgp40);
+        } else if (data.voc_index_sgp40 < 200) {
+            ESP_LOGI(TAG, "VOC Index: Good (%.0f)", data.voc_index_sgp40);
+        } else if (data.voc_index_sgp40 < 300) {
+            ESP_LOGW(TAG, "VOC Index: Moderate (%.0f)", data.voc_index_sgp40);
+        } else {
+            ESP_LOGW(TAG, "VOC Index: Poor (%.0f)", data.voc_index_sgp40);
         }
     }
 }

@@ -40,6 +40,10 @@ struct SensorData {
     float humidity_scd41;
     bool scd41_available;
     
+    // SGP40 데이터
+    float voc_index_sgp40;
+    bool sgp40_available;
+    
     uint64_t timestamp;
 };
 

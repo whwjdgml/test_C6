@@ -18,6 +18,9 @@
 // SCD41 설정
 #define SCD41_ADDR 0x62
 
+// SGP40 설정
+#define SGP40_ADDR 0x59
+
 // 측정 간격
 #define MEASUREMENT_INTERVAL_MS 5000
 

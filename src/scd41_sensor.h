@@ -35,7 +35,7 @@ private:
     bool getDataReadyStatus(bool *data_ready);
     bool readMeasurement(uint16_t *co2, uint16_t *temp, uint16_t *hum);
     bool sendCommand(uint16_t command);
-    bool sendCommandWithArgs(uint16_t command, uint16_t arg1, uint16_t arg2 = 0);
+    bool sendCommandWithArg(uint16_t command, uint16_t arg);
     bool readResponse(uint8_t *data, size_t len);
     uint8_t calculateCRC8(const uint8_t *data, size_t len);
     bool validateData(float co2, float temperature, float humidity);

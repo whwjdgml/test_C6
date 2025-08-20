@@ -2,12 +2,14 @@
 #define SENSOR_MANAGER_H
 
 #include <stdint.h>
+#include <memory>
 #include "sensor_types.h"
 
 // Forward declarations
 class AHT20Sensor;
 class BMP280Sensor;
 class SCD41Sensor;
+class SGP40Sensor;
 
 class SensorManager {
 public:
@@ -21,14 +23,16 @@ public:
 
 private:
     // 센서 객체들
-    AHT20Sensor* aht20_sensor;
-    BMP280Sensor* bmp280_sensor;
-    SCD41Sensor* scd41_sensor;
+    std::unique_ptr<AHT20Sensor> aht20_sensor;
+    std::unique_ptr<BMP280Sensor> bmp280_sensor;
+    std::unique_ptr<SCD41Sensor> scd41_sensor;
+    std::unique_ptr<SGP40Sensor> sgp40_sensor;
     
     // 초기화 상태
     bool aht20_initialized;
     bool bmp280_initialized;
     bool scd41_initialized;
+    bool sgp40_initialized;
 };
 
 #endif

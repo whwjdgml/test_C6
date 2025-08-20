@@ -7,9 +7,6 @@
 
 static const char *TAG = "SCD41";
 
-// SCD41 I2C 주소
-#define SCD41_ADDR 0x62
-
 // SCD41 명령어
 #define SCD41_CMD_START_PERIODIC_MEASUREMENT    0x21B1
 #define SCD41_CMD_READ_MEASUREMENT              0xEC05
@@ -30,30 +27,22 @@ SCD41Sensor::SCD41Sensor() : initialized_(false) {
 
 bool SCD41Sensor::init() {
     ESP_LOGI(TAG, "SCD41 센서 초기화 시작...");
-    
-    // 센서 리셋
-    if (!reset()) {
-        ESP_LOGE(TAG, "SCD41 리셋 실패");
-        return false;
-    }
-    
-    vTaskDelay(pdMS_TO_TICKS(1000)); // 리셋 후 대기
-    
-    // 자동 캘리브레이션 활성화
-    if (!setAutomaticSelfCalibration(true)) {
-        ESP_LOGW(TAG, "자동 캘리브레이션 설정 실패 (계속 진행)");
-    }
-    
-    // 주기적 측정 시작
+
+    // 1. 먼저 이전 측정 상태를 중지시켜 센서를 안정적인 상태로 만듭니다.
+    //    (처음 전원을 켤 때는 실패하는 것이 정상일 수 있습니다.)
+    stopPeriodicMeasurement();
+    vTaskDelay(pdMS_TO_TICKS(500)); // 데이터시트 권장 대기 시간 (500ms)
+
+    // 2. 주기적 측정을 시작합니다.
     if (!startPeriodicMeasurement()) {
         ESP_LOGE(TAG, "주기적 측정 시작 실패");
         return false;
     }
-    
-    // 첫 데이터가 준비될 때까지 대기
-    ESP_LOGI(TAG, "첫 번째 측정 완료 대기 중... (5초)");
+
+    // 3. 첫 데이터가 준비될 때까지 대기합니다.
+    ESP_LOGI(TAG, "첫 번째 측정 완료 대기 중... (약 5초)");
     vTaskDelay(pdMS_TO_TICKS(5000));
-    
+
     initialized_ = true;
     ESP_LOGI(TAG, "SCD41 초기화 완료");
     return true;
@@ -107,11 +96,11 @@ bool SCD41Sensor::reset() {
 
 bool SCD41Sensor::setAutomaticSelfCalibration(bool enable) {
     uint16_t value = enable ? 0x0001 : 0x0000;
-    return sendCommandWithArgs(SCD41_CMD_SET_AUTOMATIC_SELF_CAL, value);
+    return sendCommandWithArg(SCD41_CMD_SET_AUTOMATIC_SELF_CAL, value);
 }
 
 bool SCD41Sensor::performForcedRecalibration(uint16_t co2_reference) {
-    return sendCommandWithArgs(SCD41_CMD_PERFORM_FORCED_RECAL, co2_reference);
+    return sendCommandWithArg(SCD41_CMD_PERFORM_FORCED_RECAL, co2_reference);
 }
 
 bool SCD41Sensor::startPeriodicMeasurement() {
@@ -191,27 +180,19 @@ bool SCD41Sensor::sendCommand(uint16_t command) {
     return (ret == ESP_OK);
 }
 
-bool SCD41Sensor::sendCommandWithArgs(uint16_t command, uint16_t arg1, uint16_t arg2) {
-    uint8_t data[6];
+bool SCD41Sensor::sendCommandWithArg(uint16_t command, uint16_t arg) {
+    uint8_t data[5];
     data[0] = (uint8_t)(command >> 8);
     data[1] = (uint8_t)(command & 0xFF);
-    data[2] = (uint8_t)(arg1 >> 8);
-    data[3] = (uint8_t)(arg1 & 0xFF);
+    data[2] = (uint8_t)(arg >> 8);
+    data[3] = (uint8_t)(arg & 0xFF);
     data[4] = calculateCRC8(&data[2], 2);
-    
-    size_t data_len = 5;
-    if (arg2 != 0) {
-        data[5] = (uint8_t)(arg2 >> 8);
-        data[6] = (uint8_t)(arg2 & 0xFF);
-        data[7] = calculateCRC8(&data[5], 2);
-        data_len = 8;
-    }
     
     esp_err_t ret;
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
     i2c_master_start(cmd);
     i2c_master_write_byte(cmd, (SCD41_ADDR << 1) | I2C_MASTER_WRITE, true);
-    i2c_master_write(cmd, data, data_len, true);
+    i2c_master_write(cmd, data, sizeof(data), true);
     i2c_master_stop(cmd);
     ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, pdMS_TO_TICKS(I2C_TIMEOUT_MS));
     i2c_cmd_link_delete(cmd);
