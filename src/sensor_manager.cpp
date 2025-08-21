@@ -4,6 +4,7 @@
 #include "bmp280_sensor.h"
 #include "scd41_sensor.h"
 #include "sgp40_sensor.h"
+#include "ina226_monitor.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/i2c.h"
@@ -15,13 +16,20 @@ static const char *TAG = "SENSOR_MGR";
 #define I2C_MASTER_NUM          I2C_NUM_0
 #define I2C_MASTER_TIMEOUT_MS   1000
 
+// --- 사용자 설정: INA226 파라미터 ---
+// 사용 중인 션트 저항의 값 (Ohm). 실제 하드웨어에 맞게 수정해야 합니다.
+#define INA226_SHUNT_RESISTANCE  0.1f 
+// 예상되는 최대 전류 (Ampere). 이 값을 기준으로 측정 정밀도가 결정됩니다.
+#define INA226_MAX_CURRENT       1.0f 
+
 SensorManager::SensorManager() : aht20_sensor(nullptr), bmp280_sensor(nullptr), scd41_sensor(nullptr), 
-                                 aht20_initialized(false), bmp280_initialized(false), scd41_initialized(false), sgp40_initialized(false) 
+                                 aht20_initialized(false), bmp280_initialized(false), scd41_initialized(false), sgp40_initialized(false), ina226_initialized(false) 
 {
     aht20_sensor = std::make_unique<AHT20Sensor>();
     bmp280_sensor = std::make_unique<BMP280Sensor>();
     scd41_sensor = std::make_unique<SCD41Sensor>();
     sgp40_sensor = std::make_unique<SGP40Sensor>();
+    ina226_monitor = std::make_unique<INA226_Monitor>(INA226_SHUNT_RESISTANCE, INA226_MAX_CURRENT);
 }
 
 SensorManager::~SensorManager() = default; // 스마트 포인터가 자동으로 메모리를 해제합니다.
@@ -34,9 +42,10 @@ bool SensorManager::init() {
     conf.mode = I2C_MODE_MASTER;
     conf.sda_io_num = I2C_SDA_PIN;
     conf.scl_io_num = I2C_SCL_PIN;
-    conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
-    conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
-    conf.master.clk_speed = 100000;
+    // 400kHz Fast Mode 사용 시, 안정적인 신호 품질을 위해 외부 풀업 저항(예: 4.7kΩ) 사용을 권장합니다.
+    conf.sda_pullup_en = GPIO_PULLUP_DISABLE;
+    conf.scl_pullup_en = GPIO_PULLUP_DISABLE;
+    conf.master.clk_speed = 400000; // 100kHz -> 400kHz (Fast Mode)로 속도 향상
     conf.clk_flags = 0;
     
     esp_err_t ret = i2c_param_config(I2C_MASTER_NUM, &conf);
@@ -76,18 +85,27 @@ bool SensorManager::init() {
     init_and_log("SGP40", sgp40_sensor, sgp40_initialized,
                  [](){ ESP_LOGI(TAG, "SGP40 initialization successful"); });
     
+    // Initialize INA226
+    ESP_LOGI(TAG, "Initializing INA226 Battery Monitor...");
+    if (ina226_monitor && ina226_monitor->init()) {
+        ina226_initialized = true;
+        ESP_LOGI(TAG, "INA226 initialization successful (addr: 0x%02X)", ina226_monitor->getAddress());
+    } else {
+        ESP_LOGW(TAG, "INA226 initialization failed");
+    }
+    
     uint8_t working_sensors = getWorkingSensorCount();
-    if (working_sensors > 0) {
+    if (working_sensors > 0 || ina226_initialized) {
         ESP_LOGI(TAG, "SensorManager initialization complete! Working sensors: %d", working_sensors);
-        if (aht20_initialized) ESP_LOGI(TAG, "   - AHT20: temp/humidity sensor");
+        if (aht20_initialized)  ESP_LOGI(TAG, "   - AHT20: temp/humidity sensor");
         if (bmp280_initialized) ESP_LOGI(TAG, "   - BMP280: pressure/temp sensor");
-        if (scd41_initialized) ESP_LOGI(TAG, "   - SCD41: CO2/temp/humidity sensor");
-        if (sgp40_initialized) ESP_LOGI(TAG, "   - SGP40: VOC Index sensor");
+        if (scd41_initialized)  ESP_LOGI(TAG, "   - SCD41: CO2/temp/humidity sensor");
+        if (sgp40_initialized)  ESP_LOGI(TAG, "   - SGP40: VOC Index sensor");
     } else {
         ESP_LOGE(TAG, "SensorManager initialization failed - no working sensors");
     }
     
-    return (working_sensors > 0);
+    return (working_sensors > 0 || ina226_initialized);
 }
 
 SensorData SensorManager::readAllSensors() {
@@ -173,6 +191,13 @@ SensorData SensorManager::readAllSensors() {
     }
     
     return data;
+}
+
+bool SensorManager::getBatteryStatus(BatteryStatus *status) {
+    if (ina226_initialized && ina226_monitor) {
+        return ina226_monitor->readStatus(status);
+    }
+    return false;
 }
 
 bool SensorManager::hasWorkingSensors() const {

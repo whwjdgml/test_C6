@@ -47,6 +47,14 @@ struct SensorData {
     uint64_t timestamp;
 };
 
+// 배터리 상태 데이터 구조체
+struct BatteryStatus {
+    float voltage;      // 전압 (V)
+    float current;      // 전류 (mA)
+    float power;        // 전력 (mW)
+    bool is_charging;   // 충전 상태 여부
+};
+
 // 융합 센서 데이터 구조체
 struct FusedSensorData {
     float temperature_avg;

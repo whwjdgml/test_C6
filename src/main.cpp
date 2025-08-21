@@ -138,6 +138,18 @@ extern "C" void app_main() {
         // 데이터 출력
         printSensorData(sensor_data);
         
+        // 배터리 상태 읽기 및 출력
+        BatteryStatus battery_status;
+        if (sensorManager.getBatteryStatus(&battery_status)) {
+            ESP_LOGI(TAG, "🔋 배터리 상태: %.3fV, %7.2fmA, %7.2fmW [%s]",
+                     battery_status.voltage,
+                     battery_status.current,
+                     battery_status.power,
+                     battery_status.is_charging ? "충전 중" : "방전 중");
+        } else {
+            ESP_LOGD(TAG, "배터리 상태를 읽을 수 없음 (INA226이 없거나 읽기 실패)");
+        }
+        
         // 진단 (10회마다 한번씩만)
         if (measurement_count % 10 == 1) {
             sensorManager.diagnoseSensors(sensor_data);
