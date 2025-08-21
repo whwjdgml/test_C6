@@ -29,9 +29,19 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+/**
+ * @file voc_algorithm.c
+ * @brief Sensirion VOC/NOx 가스 지수 알고리즘의 구현부
+ *
+ * 이 파일은 voc_algorithm.h에 정의된 함수들을 실제로 구현합니다.
+ * 평균/분산 추정, MOX 모델, 시그모이드 스케일링, 적응형 로우패스 필터 등
+ * 알고리즘의 핵심 로직을 포함하고 있습니다.
+ */
+
 #include "voc_algorithm.h"
 #include <math.h>
 
+// 내부 정적 함수 선언
 static void GasIndexAlgorithm__init_instances(GasIndexAlgorithmParams* params);
 static void GasIndexAlgorithm__mean_variance_estimator__set_parameters(
     GasIndexAlgorithmParams* params);
@@ -69,11 +79,15 @@ static float
 GasIndexAlgorithm__adaptive_lowpass__process(GasIndexAlgorithmParams* params,
                                              float sample);
 
+/**
+ * @brief 샘플링 간격을 지정하여 가스 지수 알고리즘을 초기화합니다.
+ */
 void GasIndexAlgorithm_init_with_sampling_interval(
     GasIndexAlgorithmParams* params, int32_t algorithm_type,
     float sampling_interval) {
     params->mAlgorithm_Type = algorithm_type;
     params->mSamplingInterval = sampling_interval;
+    // 알고리즘 타입에 따라 기본 파라미터 설정
     if ((algorithm_type == GasIndexAlgorithm_ALGORITHM_TYPE_NOX)) {
         params->mIndex_Offset = GasIndexAlgorithm_NOX_INDEX_OFFSET_DEFAULT;
         params->mSraw_Minimum = GasIndexAlgorithm_NOX_SRAW_MINIMUM;
@@ -100,12 +114,18 @@ void GasIndexAlgorithm_init_with_sampling_interval(
     GasIndexAlgorithm_reset(params);
 }
 
+/**
+ * @brief 기본 샘플링 간격(1초)으로 가스 지수 알고리즘을 초기화합니다.
+ */
 void GasIndexAlgorithm_init(GasIndexAlgorithmParams* params,
                             int32_t algorithm_type) {
     GasIndexAlgorithm_init_with_sampling_interval(
         params, algorithm_type, GasIndexAlgorithm_DEFAULT_SAMPLING_INTERVAL);
 }
 
+/**
+ * @brief 알고리즘의 내부 상태를 리셋합니다.
+ */
 void GasIndexAlgorithm_reset(GasIndexAlgorithmParams* params) {
     params->mUptime = 0.f;
     params->mSraw = 0.f;
@@ -113,8 +133,10 @@ void GasIndexAlgorithm_reset(GasIndexAlgorithmParams* params) {
     GasIndexAlgorithm__init_instances(params);
 }
 
+/**
+ * @brief 알고리즘 내부의 각 모듈(인스턴스)들을 초기화합니다.
+ */
 static void GasIndexAlgorithm__init_instances(GasIndexAlgorithmParams* params) {
-
     GasIndexAlgorithm__mean_variance_estimator__set_parameters(params);
     GasIndexAlgorithm__mox_model__set_parameters(
         params, GasIndexAlgorithm__mean_variance_estimator__get_std(params),
@@ -133,22 +155,29 @@ static void GasIndexAlgorithm__init_instances(GasIndexAlgorithmParams* params) {
     GasIndexAlgorithm__adaptive_lowpass__set_parameters(params);
 }
 
+/**
+ * @brief 현재 설정된 샘플링 간격 값을 가져옵니다.
+ */
 void GasIndexAlgorithm_get_sampling_interval(
     const GasIndexAlgorithmParams* params, float* sampling_interval) {
     *sampling_interval = params->mSamplingInterval;
 }
 
+/**
+ * @brief 알고리즘의 현재 상태(평균, 표준편차)를 가져옵니다.
+ */
 void GasIndexAlgorithm_get_states(const GasIndexAlgorithmParams* params,
                                   float* state0, float* state1) {
-
     *state0 = GasIndexAlgorithm__mean_variance_estimator__get_mean(params);
     *state1 = GasIndexAlgorithm__mean_variance_estimator__get_std(params);
     return;
 }
 
+/**
+ * @brief 이전에 저장된 상태 값으로 알고리즘을 복원합니다.
+ */
 void GasIndexAlgorithm_set_states(GasIndexAlgorithmParams* params, float state0,
                                   float state1) {
-
     GasIndexAlgorithm__mean_variance_estimator__set_states(
         params, state0, state1, GasIndexAlgorithm_PERSISTENCE_UPTIME_GAMMA);
     GasIndexAlgorithm__mox_model__set_parameters(
@@ -157,12 +186,14 @@ void GasIndexAlgorithm_set_states(GasIndexAlgorithmParams* params, float state0,
     params->mSraw = state0;
 }
 
+/**
+ * @brief 알고리즘의 튜닝 파라미터를 설정합니다.
+ */
 void GasIndexAlgorithm_set_tuning_parameters(
     GasIndexAlgorithmParams* params, int32_t index_offset,
     int32_t learning_time_offset_hours, int32_t learning_time_gain_hours,
     int32_t gating_max_duration_minutes, int32_t std_initial,
     int32_t gain_factor) {
-
     params->mIndex_Offset = ((float)(index_offset));
     params->mTau_Mean_Hours = ((float)(learning_time_offset_hours));
     params->mTau_Variance_Hours = ((float)(learning_time_gain_hours));
@@ -173,12 +204,14 @@ void GasIndexAlgorithm_set_tuning_parameters(
     GasIndexAlgorithm__init_instances(params);
 }
 
+/**
+ * @brief 현재 설정된 튜닝 파라미터 값을 가져옵니다.
+ */
 void GasIndexAlgorithm_get_tuning_parameters(
     const GasIndexAlgorithmParams* params, int32_t* index_offset,
     int32_t* learning_time_offset_hours, int32_t* learning_time_gain_hours,
     int32_t* gating_max_duration_minutes, int32_t* std_initial,
     int32_t* gain_factor) {
-
     *index_offset = ((int32_t)(params->mIndex_Offset));
     *learning_time_offset_hours = ((int32_t)(params->mTau_Mean_Hours));
     *learning_time_gain_hours = ((int32_t)(params->mTau_Variance_Hours));
@@ -189,12 +222,18 @@ void GasIndexAlgorithm_get_tuning_parameters(
     return;
 }
 
+/**
+ * @brief 새로운 원시(sraw) 값을 처리하여 가스 지수를 계산합니다.
+ *
+ * 이 함수는 매 측정마다 주기적으로 호출되어야 합니다.
+ */
 void GasIndexAlgorithm_process(GasIndexAlgorithmParams* params, int32_t sraw,
                                int32_t* gas_index) {
-
+    // 초기 블랙아웃 기간 동안은 출력을 0으로 유지
     if ((params->mUptime <= GasIndexAlgorithm_INITIAL_BLACKOUT)) {
         params->mUptime = (params->mUptime + params->mSamplingInterval);
     } else {
+        // 유효한 sraw 값 범위 클리핑
         if (((sraw > 0) && (sraw < 65000))) {
             if ((sraw < (params->mSraw_Minimum + 1))) {
                 sraw = (params->mSraw_Minimum + 1);
@@ -203,6 +242,7 @@ void GasIndexAlgorithm_process(GasIndexAlgorithmParams* params, int32_t sraw,
             }
             params->mSraw = ((float)((sraw - params->mSraw_Minimum)));
         }
+        // 알고리즘 타입과 초기화 상태에 따라 가스 지수 계산
         if (((params->mAlgorithm_Type ==
               GasIndexAlgorithm_ALGORITHM_TYPE_VOC) ||
              GasIndexAlgorithm__mean_variance_estimator__is_initialized(
@@ -214,11 +254,13 @@ void GasIndexAlgorithm_process(GasIndexAlgorithmParams* params, int32_t sraw,
         } else {
             params->mGas_Index = params->mIndex_Offset;
         }
+        // 최종 지수 값에 적응형 로우패스 필터 적용
         params->mGas_Index = GasIndexAlgorithm__adaptive_lowpass__process(
             params, params->mGas_Index);
         if ((params->mGas_Index < 0.5f)) {
             params->mGas_Index = 0.5f;
         }
+        // 유효한 sraw 값이 있을 경우, 평균/분산 추정기 업데이트
         if ((params->mSraw > 0.f)) {
             GasIndexAlgorithm__mean_variance_estimator__process(params,
                                                                 params->mSraw);
@@ -228,9 +270,12 @@ void GasIndexAlgorithm_process(GasIndexAlgorithmParams* params, int32_t sraw,
                 GasIndexAlgorithm__mean_variance_estimator__get_mean(params));
         }
     }
+    // 최종 가스 지수 값을 정수로 반올림하여 반환
     *gas_index = ((int32_t)((params->mGas_Index + 0.5f)));
     return;
 }
+
+// --- 이하 내부 정적 함수들의 구현 ---
 
 static void GasIndexAlgorithm__mean_variance_estimator__set_parameters(
     GasIndexAlgorithmParams* params) {
@@ -580,3 +625,4 @@ GasIndexAlgorithm__adaptive_lowpass__process(GasIndexAlgorithmParams* params,
         (((1.f - a3) * params->m_Adaptive_Lowpass___X3) + (a3 * sample));
     return params->m_Adaptive_Lowpass___X3;
 }
+>>>>>>> REPLACE

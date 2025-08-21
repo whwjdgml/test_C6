@@ -29,6 +29,16 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+/**
+ * @file voc_algorithm.h
+ * @brief Sensirion의 VOC/NOx 가스 지수 알고리즘 헤더 파일
+ *
+ * SGP4x 센서에서 나오는 원시(raw) 신호를 기반으로 VOC(휘발성 유기 화합물) 및
+ * NOx(질소 산화물) 지수를 계산하는 데 사용되는 알고리즘의 함수와 데이터 구조를 정의합니다.
+ * 이 알고리즘은 주변 환경의 가스 농도 변화에 적응하며, 장기적인 안정성을 위해
+ * 평균 및 분산 추정, 시그모이드 함수, 적응형 로우패스 필터 등의 기법을 사용합니다.
+ */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -59,8 +69,11 @@ extern "C" {
 #define LIBRARY_VERSION_NAME "3.2.0"
 #endif
 
-#define GasIndexAlgorithm_ALGORITHM_TYPE_VOC (0)
-#define GasIndexAlgorithm_ALGORITHM_TYPE_NOX (1)
+// 알고리즘 타입 상수
+#define GasIndexAlgorithm_ALGORITHM_TYPE_VOC (0) ///< VOC 알고리즘
+#define GasIndexAlgorithm_ALGORITHM_TYPE_NOX (1) ///< NOx 알고리즘
+
+// 알고리즘의 각종 파라미터 및 상수 정의
 #define GasIndexAlgorithm_DEFAULT_SAMPLING_INTERVAL (1.f)
 #define GasIndexAlgorithm_INITIAL_BLACKOUT (45.f)
 #define GasIndexAlgorithm_INDEX_GAIN (230.f)
@@ -116,7 +129,11 @@ extern "C" {
 #define GasIndexAlgorithm_MEAN_VARIANCE_ESTIMATOR__FIX16_MAX (32767.f)
 
 /**
- * Struct to hold all parameters and states of the gas algorithm.
+ * @struct GasIndexAlgorithmParams
+ * @brief 가스 지수 알고리즘의 모든 파라미터와 상태를 저장하는 구조체
+ *
+ * 이 구조체는 알고리즘의 현재 상태와 설정된 튜닝 파라미터들을 포함합니다.
+ * 사용자는 이 구조체의 인스턴스를 생성하고, 알고리즘 함수들에 포인터로 전달해야 합니다.
  */
 typedef struct {
     int mAlgorithm_Type;
@@ -163,99 +180,80 @@ typedef struct {
 } GasIndexAlgorithmParams;
 
 /**
- * Initialize the gas index algorithm parameters for the specified algorithm
- * type and reset its internal states. Call this once at the beginning.
- * @param params            Pointer to the GasIndexAlgorithmParams struct
- * @param algorithm_type    0 (GasIndexAlgorithm_ALGORITHM_TYPE_VOC) for VOC or
- *                          1 (GasIndexAlgorithm_ALGORITHM_TYPE_NOX) for NOx
+ * @brief 가스 지수 알고리즘 파라미터를 초기화하고 내부 상태를 리셋합니다.
+ *
+ * 지정된 알고리즘 타입(VOC 또는 NOx)에 맞게 파라미터를 설정합니다.
+ * 프로그램 시작 시 한 번만 호출해야 합니다.
+ *
+ * @param params 알고리즘 파라미터 구조체의 포인터
+ * @param algorithm_type 알고리즘 타입 (0: VOC, 1: NOx)
  */
 void GasIndexAlgorithm_init(GasIndexAlgorithmParams* params,
                             int32_t algorithm_type);
 
 /**
- * Initialize the gas index algorithm parameters for the specified algorithm
- * type and reset its internal states. Call this once at the beginning.
- * @param params            Pointer to the GasIndexAlgorithmParams struct
- * @param algorithm_type    0 (GasIndexAlgorithm_ALGORITHM_TYPE_VOC) for VOC or
- *                          1 (GasIndexAlgorithm_ALGORITHM_TYPE_NOX) for NOx
- * @param sampling_interval The sampling interval in seconds the algorithm is
- *                          called. Tested for 1s and 10s.
+ * @brief 샘플링 간격을 지정하여 가스 지수 알고리즘을 초기화합니다.
+ *
+ * 기본 초기화 함수와 동일하지만, 측정 주기(샘플링 간격)를 직접 설정할 수 있습니다.
+ *
+ * @param params 알고리즘 파라미터 구조체의 포인터
+ * @param algorithm_type 알고리즘 타입 (0: VOC, 1: NOx)
+ * @param sampling_interval 알고리즘이 호출되는 샘플링 간격 (초 단위). 1초와 10초에 대해 테스트됨.
  */
 void GasIndexAlgorithm_init_with_sampling_interval(
     GasIndexAlgorithmParams* params, int32_t algorithm_type,
     float sampling_interval);
 
 /**
- * Reset the internal states of the gas index algorithm. Previously set tuning
- * parameters are preserved. Call this when resuming operation after a
- * measurement interruption.
- * @param params    Pointer to the GasIndexAlgorithmParams struct
+ * @brief 가스 지수 알고리즘의 내부 상태를 리셋합니다.
+ *
+ * 이전에 설정된 튜닝 파라미터는 유지됩니다.
+ * 측정 중단 후 다시 시작할 때 호출합니다.
+ *
+ * @param params 알고리즘 파라미터 구조체의 포인터
  */
 void GasIndexAlgorithm_reset(GasIndexAlgorithmParams* params);
 
 /**
- * Get current algorithm states. Retrieved values can be used in
- * GasIndexAlgorithm_set_states() to resume operation after a short
- * interruption, skipping initial learning phase.
- * NOTE: This feature can only be used for VOC algorithm type and after at least
- * 3 hours of continuous operation.
- * @param params    Pointer to the GasIndexAlgorithmParams struct
- * @param state0    State0 to be stored
- * @param state1    State1 to be stored
+ * @brief 현재 알고리즘 상태를 가져옵니다.
+ *
+ * 반환된 값은 GasIndexAlgorithm_set_states() 함수에서 사용하여
+ * 짧은 중단 후 초기 학습 단계를 건너뛰고 작동을 재개하는 데 사용할 수 있습니다.
+ * 참고: 이 기능은 VOC 알고리즘 타입에서만, 그리고 최소 3시간 이상 연속 작동 후에만 사용할 수 있습니다.
+ *
+ * @param params 알고리즘 파라미터 구조체의 포인터
+ * @param state0 저장할 상태 값 0
+ * @param state1 저장할 상태 값 1
  */
 void GasIndexAlgorithm_get_states(const GasIndexAlgorithmParams* params,
                                   float* state0, float* state1);
 
 /**
- * Set previously retrieved algorithm states to resume operation after a short
- * interruption, skipping initial learning phase. This feature should not be
- * used after interruptions of more than 10 minutes. Call this once after
- * GasIndexAlgorithm_init() or GasIndexAlgorithm_reset() and the optional
- * GasIndexAlgorithm_set_tuning_parameters(), if desired. Otherwise, the
- * algorithm will start with initial learning phase.
- * NOTE: This feature can only be used for VOC algorithm type.
- * @param params    Pointer to the GasIndexAlgorithmParams struct
- * @param state0    State0 to be restored
- * @param state1    State1 to be restored
+ * @brief 이전에 가져온 알고리즘 상태를 설정하여 작동을 재개합니다.
+ *
+ * 이 기능은 10분 이상의 중단 후에는 사용해서는 안 됩니다.
+ * GasIndexAlgorithm_init() 또는 GasIndexAlgorithm_reset() 호출 후에 한 번 호출합니다.
+ * 참고: 이 기능은 VOC 알고리즘 타입에서만 사용할 수 있습니다.
+ *
+ * @param params 알고리즘 파라미터 구조체의 포인터
+ * @param state0 복원할 상태 값 0
+ * @param state1 복원할 상태 값 1
  */
 void GasIndexAlgorithm_set_states(GasIndexAlgorithmParams* params, float state0,
                                   float state1);
 
 /**
- * Set parameters to customize the gas index algorithm. Call this once after
- * GasIndexAlgorithm_init() and before optional GasIndexAlgorithm_set_states(),
- * if desired. Otherwise, the default values will be used.
+ * @brief 가스 지수 알고리즘을 사용자 정의하기 위한 파라미터를 설정합니다.
  *
- * @param params                      Pointer to the GasIndexAlgorithmParams
- *                                    struct
- * @param index_offset                Gas index representing typical (average)
- *                                    conditions. Range 1..250,
- *                                    default 100 for VOC and 1 for NOx
- * @param learning_time_offset_hours  Time constant of long-term estimator for
- *                                    offset. Past events will be forgotten
- *                                    after about twice the learning time.
- *                                    Range 1..1000 [hours], default 12 [hours]
- * @param learning_time_gain_hours    Time constant of long-term estimator for
- *                                    gain. Past events will be forgotten
- *                                    after about twice the learning time.
- *                                    Range 1..1000 [hours], default 12 [hours]
- *                                    NOTE: This value is not relevant for NOx
- *                                    algorithm type
- * @param gating_max_duration_minutes Maximum duration of gating (freeze of
- *                                    estimator during high gas index signal).
- *                                    0 (no gating) or range 1..3000 [minutes],
- *                                    default 180 [minutes] for VOC and
- *                                    720 [minutes] for NOx
- * @param std_initial                 Initial estimate for standard deviation.
- *                                    Lower value boosts events during initial
- *                                    learning period, but may result in larger
- *                                    device-to-device variations.
- *                                    Range 10..5000, default 50
- *                                    NOTE: This value is not relevant for NOx
- *                                    algorithm type
- * @param gain_factor                 Factor used to scale applied gain value
- *                                    when calculating gas index. Range 1..1000,
- *                                    default 230
+ * GasIndexAlgorithm_init() 호출 후에 한 번 호출하여 기본값을 변경할 수 있습니다.
+ *
+ * @param params 알고리즘 파라미터 구조체의 포인터
+ * @param index_offset 일반적인 (평균) 상태를 나타내는 가스 지수. 범위: 1..250, 기본값: VOC 100, NOx 1.
+ * @param learning_time_offset_hours 오프셋의 장기 추정기 시간 상수. 과거 이벤트는 약 2배의 학습 시간 후에 잊혀집니다. 범위: 1..1000 [시간], 기본값: 12 [시간].
+ * @param learning_time_gain_hours 게인의 장기 추정기 시간 상수. 범위: 1..1000 [시간], 기본값: 12 [시간]. (NOx 타입에서는 무관)
+ * @param gating_max_duration_minutes 높은 가스 지수 신호 동안 추정기를 정지시키는 게이팅의 최대 지속 시간. 0 (게이팅 없음) 또는 1..3000 [분], 기본값: VOC 180분, NOx 720분.
+ * @param std_initial 표준 편차의 초기 추정치. 낮은 값은 초기 학습 기간 동안 이벤트를 증폭시키지만, 장치 간 편차를 키울 수 있습니다. 범위: 10..5000, 기본값: 50. (NOx 타입에서는 무관)
+ * @param gain_factor 가스 지수 계산 시 적용되는 게인 값을 조정하는 데 사용되는 팩터. 범위: 1..1000, 기본값: 230.
  */
 void GasIndexAlgorithm_set_tuning_parameters(
     GasIndexAlgorithmParams* params, int32_t index_offset,
@@ -264,9 +262,9 @@ void GasIndexAlgorithm_set_tuning_parameters(
     int32_t gain_factor);
 
 /**
- * Get current parameters to customize the gas index algorithm.
- * Refer to GasIndexAlgorithm_set_tuning_parameters() for description of the
- * parameters.
+ * @brief 현재 설정된 튜닝 파라미터를 가져옵니다.
+ *
+ * 각 파라미터에 대한 설명은 GasIndexAlgorithm_set_tuning_parameters()를 참조하십시오.
  */
 void GasIndexAlgorithm_get_tuning_parameters(
     const GasIndexAlgorithmParams* params, int32_t* index_offset,
@@ -275,18 +273,19 @@ void GasIndexAlgorithm_get_tuning_parameters(
     int32_t* gain_factor);
 
 /**
- * Get the sampling interval parameter used by the algorithm.
+ * @brief 알고리즘에서 사용하는 샘플링 간격 파라미터를 가져옵니다.
  */
 void GasIndexAlgorithm_get_sampling_interval(
     const GasIndexAlgorithmParams* params, float* sampling_interval);
 
 /**
- * Calculate the gas index value from the raw sensor value.
+ * @brief 원시 센서 값으로부터 가스 지수 값을 계산합니다.
  *
- * @param params      Pointer to the GasIndexAlgorithmParams struct
- * @param sraw        Raw value from the SGP4x sensor
- * @param gas_index   Calculated gas index value from the raw sensor value. Zero
- *                    during initial blackout period and 1..500 afterwards
+ * 이 함수는 주기적으로(예: 매초) 호출되어야 합니다.
+ *
+ * @param params 알고리즘 파라미터 구조체의 포인터
+ * @param sraw SGP4x 센서로부터의 원시 값
+ * @param gas_index 계산된 가스 지수 값. 초기 블랙아웃 기간 동안은 0, 이후에는 1..500 사이의 값을 가집니다.
  */
 void GasIndexAlgorithm_process(GasIndexAlgorithmParams* params, int32_t sraw,
                                int32_t* gas_index);
