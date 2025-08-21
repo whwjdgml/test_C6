@@ -54,41 +54,27 @@ bool SensorManager::init() {
     ESP_LOGI(TAG, "I2C initialized successfully");
     vTaskDelay(pdMS_TO_TICKS(200));
     
-    // Initialize AHT20
-    ESP_LOGI(TAG, "Initializing AHT20...");
-    if (aht20_sensor && aht20_sensor->init()) {
-        aht20_initialized = true;
-        ESP_LOGI(TAG, "AHT20 initialization successful");
-    } else {
-        ESP_LOGW(TAG, "AHT20 initialization failed");
-    }
-    
-    // Initialize BMP280
-    ESP_LOGI(TAG, "Initializing BMP280...");
-    if (bmp280_sensor && bmp280_sensor->init()) {
-        bmp280_initialized = true;
-        ESP_LOGI(TAG, "BMP280 initialization successful (addr: 0x%02X)", bmp280_sensor->getAddress());
-    } else {
-        ESP_LOGW(TAG, "BMP280 initialization failed");
-    }
-    
-    // Initialize SCD41
-    ESP_LOGI(TAG, "Initializing SCD41...");
-    if (scd41_sensor && scd41_sensor->init()) {
-        scd41_initialized = true;
-        ESP_LOGI(TAG, "SCD41 initialization successful");
-    } else {
-        ESP_LOGW(TAG, "SCD41 initialization failed");
-    }
-    
-    // Initialize SGP40
-    ESP_LOGI(TAG, "Initializing SGP40...");
-    if (sgp40_sensor && sgp40_sensor->init()) {
-        sgp40_initialized = true;
-        ESP_LOGI(TAG, "SGP40 initialization successful");
-    } else {
-        ESP_LOGW(TAG, "SGP40 initialization failed");
-    }
+    auto init_and_log = [this](const char* name, auto& sensor, bool& flag, auto&& success_log_action) {
+        ESP_LOGI(TAG, "Initializing %s...", name);
+        if (sensor && sensor->init()) {
+            flag = true;
+            success_log_action();
+        } else {
+            ESP_LOGW(TAG, "%s initialization failed", name);
+        }
+    };
+
+    init_and_log("AHT20", aht20_sensor, aht20_initialized,
+                 [](){ ESP_LOGI(TAG, "AHT20 initialization successful"); });
+
+    init_and_log("BMP280", bmp280_sensor, bmp280_initialized,
+                 [this](){ ESP_LOGI(TAG, "BMP280 initialization successful (addr: 0x%02X)", bmp280_sensor->getAddress()); });
+
+    init_and_log("SCD41", scd41_sensor, scd41_initialized,
+                 [](){ ESP_LOGI(TAG, "SCD41 initialization successful"); });
+
+    init_and_log("SGP40", sgp40_sensor, sgp40_initialized,
+                 [](){ ESP_LOGI(TAG, "SGP40 initialization successful"); });
     
     uint8_t working_sensors = getWorkingSensorCount();
     if (working_sensors > 0) {

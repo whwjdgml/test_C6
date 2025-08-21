@@ -1,21 +1,21 @@
 #include "aht20_sensor.h"
 #include "sensor_config.h"
+#include "i2c_wrapper.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "driver/i2c.h"
 
 static const char *TAG = "AHT20";
 
 // AHT20 명령어
-#define AHT20_INIT_CMD      0xBE
-#define AHT20_TRIGGER_CMD   0xAC
-#define AHT20_SOFT_RESET    0xBA
-#define AHT20_STATUS_CMD    0x71
+static constexpr uint8_t AHT20_INIT_CMD      = 0xBE;
+static constexpr uint8_t AHT20_TRIGGER_CMD   = 0xAC;
+static constexpr uint8_t AHT20_SOFT_RESET    = 0xBA;
+static constexpr uint8_t AHT20_STATUS_CMD    = 0x71;
 
 // AHT20 상태 비트
-#define AHT20_STATUS_BUSY   0x80
-#define AHT20_STATUS_CAL    0x08
+static constexpr uint8_t AHT20_STATUS_BUSY   = 0x80;
+static constexpr uint8_t AHT20_STATUS_CAL    = 0x08;
 
 #define I2C_MASTER_NUM      I2C_NUM_0
 #define I2C_TIMEOUT_MS      1000
