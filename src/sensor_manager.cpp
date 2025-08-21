@@ -18,7 +18,8 @@ static const char *TAG = "SENSOR_MGR";
 
 // --- 사용자 설정: INA226 파라미터 ---
 // 사용 중인 션트 저항의 값 (Ohm). 실제 하드웨어에 맞게 수정해야 합니다.
-#define INA226_SHUNT_RESISTANCE  0.1f 
+#define INA226_SHUNT_RESISTANCE  0.05f //측정후 수정할것!
+
 // 예상되는 최대 전류 (Ampere). 이 값을 기준으로 측정 정밀도가 결정됩니다.
 #define INA226_MAX_CURRENT       1.0f 
 
