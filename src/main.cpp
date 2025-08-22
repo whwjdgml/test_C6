@@ -38,7 +38,8 @@ void printSystemInfo() {
     ESP_LOGI(TAG, "║ 힙 메모리   │                                   ║");
     ESP_LOGI(TAG, "║ MAC 주소    │ %02X:%02X:%02X:%02X:%02X:%02X    ║", 
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-    ESP_LOGI(TAG, "║ I2C 핀 설정 │ SDA: GPIO%d, SCL: GPIO%d         ║", I2C_SDA_PIN, I2C_SCL_PIN);
+    ESP_LOGI(TAG, "║ I2C 핀 설정 │ SDA: GPIO%d, SCL: GPIO%d (HP Core) ║", I2C_SDA_PIN, I2C_SCL_PIN);
+    ESP_LOGI(TAG, "║ LP I2C 핀   │ SDA: GPIO%d, SCL: GPIO%d (LP Core) ║", LP_I2C_SDA_PIN, LP_I2C_SCL_PIN);
     ESP_LOGI(TAG, "╚═══════════════════════════════════════════════════╝");
 }
 
@@ -87,8 +88,8 @@ extern "C" void app_main() {
     esp_log_level_set("SENSOR_MGR", ESP_LOG_DEBUG);
     esp_log_level_set("AHT20", ESP_LOG_INFO);
     
-    ESP_LOGI(TAG, "🚀 Xiao ESP32C6 센서 테스트 (실제 센서 읽기 버전)");
-    ESP_LOGI(TAG, "AHT20 + BMP280 + SCD41 + SGP40 센서 모듈 테스트");
+    ESP_LOGI(TAG, "🚀 Xiao ESP32C6 센서 테스트 (DS3231 RTC + 적응형 절전 모드)");
+    ESP_LOGI(TAG, "AHT20 + BMP280 + SCD41 + SGP40 + DS3231 + INA226 통합 시스템");
     
     // 시스템 정보 출력
     printSystemInfo();
@@ -102,7 +103,34 @@ extern "C" void app_main() {
     ESP_LOGI(TAG, "🔧 센서 초기화 시작...");
     ESP_LOGI(TAG, "════════════════════════════════════════");
     
+    // I2C 버스 스캔 (프로토타입용 - 연결된 센서 확인)
+    sensorManager.scanI2CBus();
+    ESP_LOGI(TAG, "────────────────────────────────────────");
+    
     bool init_success = sensorManager.init();
+    
+    // DS3231 RTC 초기화
+    ESP_LOGI(TAG, "🕒 DS3231 RTC 초기화...");
+    bool rtc_success = sensorManager.initRTC();
+    if (rtc_success) {
+        ESP_LOGI(TAG, "✅ DS3231 RTC 초기화 성공");
+        
+        // RTC 온도 센서 확인
+        float rtc_temp = sensorManager.getRTCTemperature();
+        ESP_LOGI(TAG, "DS3231 온도: %.2f°C", rtc_temp);
+        
+        // 시스템 시간 표시
+        sensorManager.getSystemTime();
+        
+        // 시간이 설정되지 않은 경우 기본 시간 설정 (2024년 8월 22일 12:00:00)
+        // 실제 운영에서는 NTP나 사용자 입력으로 설정해야 함
+        // if (!sensorManager.getSystemTime()) {
+        //     ESP_LOGI(TAG, "기본 시간 설정 중...");
+        //     sensorManager.setSystemTime(2024, 8, 22, 12, 0, 0);
+        // }
+    } else {
+        ESP_LOGW(TAG, "⚠️  DS3231 RTC 초기화 실패 - 내부 시계 사용");
+    }
     
     ESP_LOGI(TAG, "════════════════════════════════════════");
     if (!init_success) {
@@ -118,6 +146,9 @@ extern "C" void app_main() {
     } else {
         ESP_LOGI(TAG, "✅ 센서 매니저 초기화 완료!");
         ESP_LOGI(TAG, "감지된 센서: %d개", sensorManager.getWorkingSensorCount());
+        ESP_LOGI(TAG, "DS3231 RTC: %s", rtc_success ? "초기화됨" : "초기화 실패");
+        ESP_LOGI(TAG, "현재 전력 모드: %s", 
+                sensorManager.getCurrentPowerMode() == POWER_MODE_NORMAL ? "일반 모드 (HP Core)" : "저전력 모드 (LP Core)");
     }
     
     ESP_LOGI(TAG, "");
@@ -135,6 +166,9 @@ extern "C" void app_main() {
         // 센서 데이터 읽기 - 이제 실제 센서에서 읽어옵니다
         SensorData sensor_data = sensorManager.readAllSensors();
         
+        // 데이터 유효성 검증 (프로토타입용)
+        sensorManager.validateSensorData(sensor_data);
+        
         // 데이터 출력
         printSensorData(sensor_data);
         
@@ -150,14 +184,40 @@ extern "C" void app_main() {
             ESP_LOGD(TAG, "배터리 상태를 읽을 수 없음 (INA226이 없거나 읽기 실패)");
         }
         
-        // 진단 (10회마다 한번씩만)
-        if (measurement_count % 10 == 1) {
+        // RTC 기반 시간 정보 및 브로드캐스트 메시지 확인
+        if (rtc_success) {
+            // RTC 알람 체크 (Wake-up 신호)
+            if (sensorManager.isWakeupByAlarm()) {
+                ESP_LOGI(TAG, "⏰ RTC 알람에 의한 Wake-up 감지");
+            }
+            
+            // 브로드캐스트 메시지 체크 (10회마다)
+            if (measurement_count % 10 == 1) {
+                ESP_LOGI(TAG, "📡 브로드캐스트 메시지 확인...");
+                if (sensorManager.checkBroadcastMessages()) {
+                    ESP_LOGI(TAG, "🔔 리시버 노드로부터 모드 변경 신호 수신");
+                }
+            }
+        }
+        
+        // 진단 (5회마다 한번씩 - 프로토타입 단계에서는 더 자주 확인)
+        if (measurement_count % 5 == 1) {
             sensorManager.diagnoseSensors(sensor_data);
         }
         
-        // 센서가 하나도 작동하지 않으면 경고
+        // 센서가 하나도 작동하지 않으면 복구 시도
         if (!sensorManager.hasWorkingSensors()) {
-            ESP_LOGW(TAG, "⚠️  작동하는 센서가 없습니다. 하드웨어 연결을 확인하세요.");
+            ESP_LOGW(TAG, "⚠️  작동하는 센서가 없습니다. 복구를 시도합니다.");
+            if (sensorManager.recoverFailedSensors()) {
+                ESP_LOGI(TAG, "🎉 센서 복구 성공! 측정을 계속합니다.");
+            } else {
+                ESP_LOGE(TAG, "❌ 센서 복구 실패. 하드웨어 연결을 확인하세요.");
+            }
+        }
+        
+        // 연결 상태 체크 (20회마다)
+        if (measurement_count % 20 == 0) {
+            sensorManager.checkSensorConnections();
         }
         
         // 5초 대기
