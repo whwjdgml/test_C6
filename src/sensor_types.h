@@ -55,6 +55,18 @@ struct BatteryStatus {
     bool is_charging;   // 충전 상태 여부
 };
 
+// 배터리 히터 상태 데이터 구조체
+struct BatteryHeaterStatus {
+    float battery_temperature;    // 배터리 온도 (°C)
+    heater_state_t heater_state; // 현재 히터 상태
+    uint8_t pwm_duty_percent;    // PWM 듀티비 (%)
+    float power_consumption;     // 현재 전력 소모 (W)
+    bool stepup_enabled;         // 스텝업 컨버터 활성화 여부
+    uint32_t total_heating_time; // 총 가열 시간 (초)
+    uint32_t heating_cycles;     // 가열 사이클 수
+    uint64_t timestamp;          // 타임스탬프
+};
+
 // 융합 센서 데이터 구조체
 struct FusedSensorData {
     float temperature_avg;

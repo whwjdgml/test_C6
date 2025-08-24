@@ -1,0 +1,142 @@
+🔥 1. 기본 비례제어 히터 (prototype_test_main.cpp)
+
+  테스트 제어:
+
+  start [분]          # 연속 테스트 시작 (예: start 30)
+  stop               # 연속 테스트 중지
+  shock              # 온도 쇼크 테스트 (급격한 목표온도 변경)
+
+  상태 확인:
+
+  status             # 현재 히터 상태 출력
+  log [개수]         # 최근 측정 데이터 출력 (예: log 20)
+  csv                # 전체 데이터 CSV 형태로 출력
+
+  파라미터 튜닝:
+
+  tune kp=값         # 비례 게인 설정 (예: tune kp=15)
+  tune target=값     # 목표 온도 설정 (예: tune target=6)
+  tune dead=값       # 데드존 설정 (예: tune dead=0.3)
+  tune max=값        # 최대 듀티 설정 (예: tune max=80)
+  tune enable        # 비례 제어 활성화
+  tune disable       # 비례 제어 비활성화 (히스테리시스 모드)
+  tune params        # 현재 파라미터 출력
+  tune stats         # 성능 통계 출력
+  tune reset         # 통계 초기화
+
+  📡 2. ESP-NOW 수신기 (receiver_main.cpp)
+
+  모니터링:
+
+  status             # 최신 히터 상태 출력
+  monitor            # 실시간 모니터링 시작
+  stop               # 실시간 모니터링 중지
+  stats              # 수신 통계 출력
+
+  원격 제어:
+
+  send target 값     # 목표온도 변경 (예: send target 6.0)
+  send kp 값         # 비례게인 변경 (예: send kp 20)
+  send enable 1      # 히터 활성화
+  send enable 0      # 히터 비활성화
+
+  연결 설정:
+
+  sender <MAC주소>   # 송신기 MAC 주소 설정
+                     # 예: sender 24:6F:28:AB:CD:EF
+
+  🔥📡 3. 통합 시스템 (heater_with_espnow.cpp)
+
+  기본 히터 명령어 (위의 1번과 동일):
+
+  start [분]         # 연속 테스트 시작
+  stop               # 테스트 중지
+  status             # 상태 확인
+  tune kp=값         # 게인 조정
+  # ... 기타 tune 명령어들 동일
+
+  ESP-NOW 통신 제어:
+
+  espnow_on          # ESP-NOW 데이터 전송 활성화
+  espnow_off         # ESP-NOW 데이터 전송 비활성화
+  interval <초>      # 데이터 전송 간격 설정 (예: interval 30)
+  send_now           # 즉시 데이터 전송
+  comm_stats         # ESP-NOW 통신 통계 출력
+
+  🎯 실제 사용 시나리오 예시
+
+  시나리오 1: 기본 성능 테스트
+
+  # 1단계: 초기 설정
+  > status                    # 현재 상태 확인
+  > tune params              # 기본 파라미터 확인
+
+  # 2단계: 30분 테스트
+  > start 30                 # 30분간 자동 테스트
+  > log 10                   # 중간에 최근 10개 데이터 확인
+
+  # 3단계: 결과 분석
+  > tune stats               # 성능 통계 확인
+  > csv                      # 전체 데이터 CSV 출력 (Excel 분석용)
+
+  시나리오 2: 파라미터 최적화
+
+  # 1단계: 기본 게인 테스트
+  > tune kp=10               # 낮은 게인으로 시작
+  > start 10                 # 10분 테스트
+  > tune stats               # 결과 확인
+
+  # 2단계: 게인 조정
+  > tune kp=20               # 게인 증가
+  > start 10                 # 다시 10분 테스트
+  > tune stats               # 성능 비교
+
+  # 3단계: 쇼크 테스트
+  > shock                    # 급격한 온도 변화 테스트
+
+  시나리오 3: 원격 모니터링 (2대 ESP32 필요)
+
+  송신기 (현장):
+  > start 120                # 2시간 자동 운영
+  > espnow_on               # 무선 전송 시작
+  > interval 30             # 30초마다 데이터 전송
+  > comm_stats              # 통신 상태 확인
+
+  수신기 (실내):
+  > monitor                 # 실시간 모니터링 시작
+  🌡️ 4.8°C → 35% PWM (목표: 5.0°C, 오차: +0.2°C) [ON]
+
+  > send target 6.0         # 원격으로 목표온도 변경
+  > send kp 25              # 원격으로 게인 조정
+  > stats                   # 수신 통계 확인
+
+  💡 명령어 사용 팁
+
+  자주 사용하는 조합:
+
+  # 빠른 성능 체크
+  > status && tune stats
+
+  # 실시간 튜닝
+  > monitor
+  > send target 7.0         # 다른 터미널에서
+
+  # 데이터 내보내기
+  > csv > heater_data.csv   # CSV 파일로 저장
+
+  문제 해결 명령어:
+
+  # 히터가 안 켜질 때
+  > tune disable            # 히스테리시스 모드로 전환
+  > tune enable             # 다시 비례제어 모드
+
+  # 통신 문제 시
+  > comm_stats              # 통신 통계 확인
+  > espnow_off && espnow_on # 통신 재시작
+
+  # 성능 이상 시
+  > tune reset              # 통계 초기화
+  > tune kp=15              # 기본값으로 복원
+
+  모든 명령어가 실시간으로 동작하며, 테스트 중에도 파라미터 조정이 
+  가능합니다! 🚀

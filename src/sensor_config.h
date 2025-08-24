@@ -33,6 +33,12 @@
 // DS3231 RTC 설정
 #define DS3231_ADDR 0x68
 
+// 배터리 히터 시스템 핀 설정 (Xiao ESP32C6)
+#define BATTERY_NTC_ADC_CHANNEL     ADC1_CHANNEL_0  // GPIO0 - NTC 온도센서 ADC 입력
+#define BATTERY_NTC_POWER_PIN       GPIO_NUM_1      // GPIO1 - NTC 센서 전원 제어
+#define BATTERY_HEATER_PWM_PIN      GPIO_NUM_2      // GPIO2 - 히터 PWM 출력
+#define STEPUP_CONVERTER_EN_PIN     GPIO_NUM_3      // GPIO3 - 5V 스텝업 컨버터 EN 제어
+
 // 측정 간격 설정 (포천시 기후 맞춤)
 #define MEASUREMENT_INTERVAL_MS         5000        // 프로토타입용 (5초)
 #define PRODUCTION_SENSOR_INTERVAL_MS   3600000     // 센서 데이터 측정 (1시간)
