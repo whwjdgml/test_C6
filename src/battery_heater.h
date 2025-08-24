@@ -10,7 +10,7 @@
 #include "freertos/task.h"
 
 class BatteryHeater {
-private:
+protected:
     static const char* TAG;
     
     // 하드웨어 설정
@@ -47,7 +47,7 @@ private:
     void updateHeaterOutput(heater_state_t new_state);
     uint8_t getStatePWMDuty(heater_state_t state);
     const char* getStateName(heater_state_t state);
-    float getStatePowerConsumption(heater_state_t state);
+    float getStatePowerConsumption(heater_state_t state) const;
 
 public:
     BatteryHeater(NTCSensor* sensor, gpio_num_t stepup_pin, gpio_num_t pwm_output_pin,

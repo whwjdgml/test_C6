@@ -106,8 +106,7 @@ private:
     bool initWiFi();
     bool initESPNow();
     static void onDataReceived(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len);
-    static void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status);
-    void fillPacketHeader(ESPNowPacketHeader* header, espnow_packet_type_t type, uint16_t data_len);
+    static void onDataSent(const wifi_tx_info_t *tx_info, esp_now_send_status_t status);
 
 public:
     ESPNowManager();
@@ -138,6 +137,7 @@ public:
     // 유틸리티
     void printMAC(const uint8_t* mac);
     void printStatistics();
+    void fillPacketHeader(ESPNowPacketHeader* header, espnow_packet_type_t type, uint16_t data_len);
     
     void deinit();
 };

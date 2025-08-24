@@ -72,31 +72,35 @@ bool BatteryHeater::init() {
 
 bool BatteryHeater::initPWM() {
     // LEDC 타이머 설정
-    ledc_timer_config_t ledc_timer_config = {
+    ledc_timer_config_t timer_config = {
         .speed_mode = ledc_mode,
         .duty_resolution = LEDC_TIMER_8_BIT,  // 8비트 (0-255)
         .timer_num = ledc_timer,
         .freq_hz = HEATER_PWM_FREQ_HZ,        // 1kHz
-        .clk_cfg = LEDC_AUTO_CLK
+        .clk_cfg = LEDC_AUTO_CLK,
+        .deconfigure = false
     };
     
-    esp_err_t ret = ledc_timer_config(&ledc_timer_config);
+    esp_err_t ret = ledc_timer_config(&timer_config);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "LEDC 타이머 설정 실패: %s", esp_err_to_name(ret));
         return false;
     }
     
     // LEDC 채널 설정
-    ledc_channel_config_t ledc_channel_config = {
+    ledc_channel_config_t channel_config = {
         .gpio_num = pwm_pin,
         .speed_mode = ledc_mode,
         .channel = ledc_channel,
+        .intr_type = LEDC_INTR_DISABLE,
         .timer_sel = ledc_timer,
         .duty = 0,                           // 초기 듀티 0%
-        .hpoint = 0
+        .hpoint = 0,
+        .sleep_mode = LEDC_SLEEP_MODE_KEEP_ALIVE,
+        .flags = {0}
     };
     
-    ret = ledc_channel_config(&ledc_channel_config);
+    ret = ledc_channel_config(&channel_config);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "LEDC 채널 설정 실패: %s", esp_err_to_name(ret));
         return false;
@@ -232,7 +236,7 @@ const char* BatteryHeater::getStateName(heater_state_t state) {
     }
 }
 
-float BatteryHeater::getStatePowerConsumption(heater_state_t state) {
+float BatteryHeater::getStatePowerConsumption(heater_state_t state) const {
     switch (state) {
         case HEATER_OFF:  return 0.0f;
         case HEATER_LOW:  return PWM_25_POWER_W;   // 0.39W

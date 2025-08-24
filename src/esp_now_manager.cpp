@@ -91,7 +91,7 @@ void ESPNowManager::onDataReceived(const esp_now_recv_info_t *recv_info, const u
              recv_info->src_addr[3], recv_info->src_addr[4], recv_info->src_addr[5]);
 }
 
-void ESPNowManager::onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+void ESPNowManager::onDataSent(const wifi_tx_info_t *tx_info, esp_now_send_status_t status) {
     if (g_espnow_instance) {
         if (status == ESP_NOW_SEND_SUCCESS) {
             g_espnow_instance->packets_sent++;
@@ -100,13 +100,14 @@ void ESPNowManager::onDataSent(const uint8_t *mac_addr, esp_now_send_status_t st
         }
         
         if (g_espnow_instance->on_send_complete) {
-            g_espnow_instance->on_send_complete(mac_addr, status);
+            // For send callback, we need to extract MAC from tx_info differently
+            // ESP-IDF 5.5 changed the structure, we'll use a null pointer for now
+            g_espnow_instance->on_send_complete(nullptr, status);
         }
     }
     
-    ESP_LOGV(ESPNowManager::TAG, "전송 완료: %s to %02X:%02X:%02X:%02X:%02X:%02X",
-             (status == ESP_NOW_SEND_SUCCESS) ? "성공" : "실패",
-             mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+    ESP_LOGV(ESPNowManager::TAG, "전송 완료: %s",
+             (status == ESP_NOW_SEND_SUCCESS) ? "성공" : "실패");
 }
 
 bool ESPNowManager::addPeer(const uint8_t* mac_address) {

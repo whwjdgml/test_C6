@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "sensor_config.h"
 
 // BMP280 캘리브레이션 데이터 구조체
 struct BMP280CalibData {

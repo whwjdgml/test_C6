@@ -12,6 +12,11 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 
+#include "hal/adc_types.h"
+#include "driver/adc.h"
+#include "esp_adc_cal.h"
+#include "driver/gpio.h"
+#include "linenoise/linenoise.h"
 #include "sensor_config.h"
 #include "ntc_sensor.h"
 #include "proportional_battery_heater.h"
@@ -53,10 +58,25 @@ struct TestDataLog {
     uint8_t pwm_duty;
     float temperature_error;
     bool stepup_active;
+    bool comm_failed;           // 통신 실패 여부 추가
 };
-static TestDataLog test_data_log[100];
+
+// 확장된 로깅 시스템 (24시간 = 1440분)
+#define MAX_LOG_ENTRIES 1500    // 25시간분 여유
+static TestDataLog test_data_log[MAX_LOG_ENTRIES];
 static int log_index = 0;
 static bool log_full = false;
+
+// 통신 실패 로깅 통계
+static uint32_t total_comm_attempts = 0;
+static uint32_t total_comm_failures = 0;
+
+// 안테나 제어
+typedef enum {
+    ANTENNA_INTERNAL = 0,    // 내장 안테나
+    ANTENNA_EXTERNAL = 1     // 외부 U.FL 안테나
+} antenna_type_t;
+static antenna_type_t current_antenna = ANTENNA_INTERNAL;
 
 // NVS에서 모드 저장/로드
 void saveCurrentMode() {
@@ -105,8 +125,18 @@ void receiver_task(void *pvParameters);
 
 // 공통 유틸리티 함수들
 void log_test_data();
+void log_test_data_with_comm_status(bool comm_success);
 void sendHeaterStatusPacket();
+bool attemptDataTransmission();
 const char* getModeString(system_mode_t mode);
+
+// 안테나 제어 함수들
+bool initAntennaControl();
+void setAntennaType(antenna_type_t antenna);
+antenna_type_t getAntennaType();
+void saveAntennaType();
+antenna_type_t loadAntennaType();
+const char* getAntennaString(antenna_type_t antenna);
 
 // 콘솔 명령어들
 static int cmd_set_mode(int argc, char **argv);
@@ -122,6 +152,8 @@ static int cmd_send_command(int argc, char **argv);
 static int cmd_comm_stats(int argc, char **argv);
 static int cmd_set_interval(int argc, char **argv);
 static int cmd_send_now(int argc, char **argv);
+static int cmd_antenna(int argc, char **argv);
+static int cmd_logstats(int argc, char **argv);
 static int cmd_help(int argc, char **argv);
 
 // 콘솔 명령어 등록
@@ -234,6 +266,22 @@ void register_unified_commands() {
     };
     esp_console_cmd_register(&sendnow_cmd);
     
+    const esp_console_cmd_t antenna_cmd = {
+        .command = "antenna",
+        .help = "안테나 선택 (internal/external)",
+        .hint = "[internal|external]",
+        .func = &cmd_antenna,
+    };
+    esp_console_cmd_register(&antenna_cmd);
+    
+    const esp_console_cmd_t logstats_cmd = {
+        .command = "logstats",
+        .help = "로깅 및 통신 통계 출력",
+        .hint = NULL,
+        .func = &cmd_logstats,
+    };
+    esp_console_cmd_register(&logstats_cmd);
+    
     const esp_console_cmd_t help_cmd = {
         .command = "help",
         .help = "도움말 출력",
@@ -248,7 +296,7 @@ bool initHeaterMode() {
     ESP_LOGI(TAG, "히터 전용 모드 초기화...");
     
     // NTC 센서 초기화
-    battery_ntc = new NTCSensor(BATTERY_NTC_ADC_CHANNEL, BATTERY_NTC_POWER_PIN);
+    battery_ntc = new NTCSensor((adc_channel_t)BATTERY_NTC_ADC_CHANNEL, BATTERY_NTC_POWER_PIN);
     if (!battery_ntc->init()) {
         ESP_LOGE(TAG, "NTC 센서 초기화 실패");
         return false;
@@ -353,7 +401,7 @@ void heater_only_task(void *pvParameters) {
             test_measurement_count++;
             
             if (prop_heater->updateProportionalHeater()) {
-                log_test_data();
+                log_test_data_with_comm_status(false); // 히터 전용 모드는 통신 없음
                 
                 if (test_measurement_count % 6 == 1) { // 1분마다
                     float temp = prop_heater->getLastTemperature();
@@ -381,13 +429,15 @@ void transmitter_task(void *pvParameters) {
             test_measurement_count++;
             
             if (prop_heater->updateProportionalHeater()) {
-                log_test_data();
-                
-                // 주기적 데이터 전송
+                // 주기적 데이터 전송 시도
+                bool comm_success = false;
                 if (current_time - last_data_send_ms >= data_send_interval_ms) {
-                    sendHeaterStatusPacket();
+                    comm_success = attemptDataTransmission();
                     last_data_send_ms = current_time;
                 }
+                
+                // 통신 결과와 함께 로깅
+                log_test_data_with_comm_status(comm_success);
                 
                 // 하트비트 (2분마다)
                 if (current_time - last_heartbeat_ms >= 120000) {
@@ -500,8 +550,69 @@ void log_test_data() {
         default: data->pwm_duty = 0; break;
     }
     
-    log_index = (log_index + 1) % 100;
+    data->comm_failed = false;  // 기본값 (구버전 호환성)
+    
+    log_index = (log_index + 1) % MAX_LOG_ENTRIES;
     if (log_index == 0) log_full = true;
+}
+
+void log_test_data_with_comm_status(bool comm_success) {
+    if (!prop_heater) return;
+    
+    TestDataLog* data = &test_data_log[log_index];
+    data->timestamp_ms = esp_timer_get_time() / 1000;
+    data->battery_temp = prop_heater->getLastTemperature();
+    data->temperature_error = prop_heater->getTargetTemperature() - data->battery_temp;
+    data->stepup_active = prop_heater->isStepUpEnabled();
+    data->comm_failed = !comm_success;  // 통신 실패 여부 기록
+    
+    // PWM 듀티 계산
+    switch (prop_heater->getCurrentState()) {
+        case HEATER_LOW:  data->pwm_duty = 25; break;
+        case HEATER_MED:  data->pwm_duty = 50; break;
+        case HEATER_HIGH: data->pwm_duty = 75; break;
+        case HEATER_MAX:  data->pwm_duty = 100; break;
+        default: data->pwm_duty = 0; break;
+    }
+    
+    // 통신 통계 업데이트 (전송을 시도한 경우만)
+    if (current_mode == MODE_TRANSMITTER) {
+        uint32_t current_time = esp_timer_get_time() / 1000;
+        static uint32_t last_attempt_time = 0;
+        
+        if (current_time - last_attempt_time >= data_send_interval_ms) {
+            total_comm_attempts++;
+            if (!comm_success) {
+                total_comm_failures++;
+            }
+            last_attempt_time = current_time;
+        }
+    }
+    
+    log_index = (log_index + 1) % MAX_LOG_ENTRIES;
+    if (log_index == 0) log_full = true;
+}
+
+bool attemptDataTransmission() {
+    if (!espnow_mgr || !prop_heater) return false;
+    
+    // 데이터 전송 시도
+    sendHeaterStatusPacket();
+    
+    // TODO: 실제 전송 성공/실패 확인 로직
+    // ESP-NOW에서 실제 ACK를 받거나 타임아웃을 체크해야 함
+    // 현재는 ESP-NOW 매니저의 통계를 기반으로 추정
+    
+    vTaskDelay(pdMS_TO_TICKS(100)); // 전송 완료 대기
+    
+    // 간단한 성공/실패 판정 (실제로는 더 정교한 로직 필요)
+    static uint32_t last_success_count = 0;
+    uint32_t current_success_count = espnow_mgr->getPacketsSent();
+    
+    bool success = (current_success_count > last_success_count);
+    last_success_count = current_success_count;
+    
+    return success;
 }
 
 void sendHeaterStatusPacket() {
@@ -609,6 +720,7 @@ static int cmd_set_mode(int argc, char **argv) {
 static int cmd_show_mode(int argc, char **argv) {
     printf("\n=== 시스템 정보 ===\n");
     printf("현재 모드: %s\n", getModeString(current_mode));
+    printf("현재 안테나: %s\n", getAntennaString(current_antenna));
     
     if (current_mode != MODE_RECEIVER && prop_heater) {
         printf("히터 상태: %s\n", prop_heater->getCurrentState() == HEATER_OFF ? "OFF" : "ON");
@@ -711,42 +823,44 @@ static int cmd_show_log(int argc, char **argv) {
     if (argc > 1) {
         count = atoi(argv[1]);
     }
-    if (count > 100) count = 100;
+    if (count > MAX_LOG_ENTRIES) count = MAX_LOG_ENTRIES;
     
-    printf("\n=== 최근 %d개 측정 데이터 ===\n", count);
-    printf("시간(초)\t온도(°C)\t듀티(%%)\t오차(°C)\n");
+    printf("\n=== 최근 %d개 측정 데이터 (통신 상태 포함) ===\n", count);
+    printf("시간(초)\t온도(°C)\t듀티(%%)\t오차(°C)\t통신\n");
     
-    int start_idx = log_full ? (log_index - count + 100) % 100 : 
+    int start_idx = log_full ? (log_index - count + MAX_LOG_ENTRIES) % MAX_LOG_ENTRIES : 
                               (log_index - count < 0) ? 0 : log_index - count;
     
     for (int i = 0; i < count; i++) {
-        int idx = (start_idx + i) % 100;
+        int idx = (start_idx + i) % MAX_LOG_ENTRIES;
         if (!log_full && idx >= log_index) break;
         
         TestDataLog* data = &test_data_log[idx];
-        printf("%lu\t\t%.2f\t\t%d\t%+.2f\n",
+        printf("%lu\t\t%.2f\t\t%d\t%+.2f\t\t%s\n",
                data->timestamp_ms / 1000, data->battery_temp, 
-               data->pwm_duty, data->temperature_error);
+               data->pwm_duty, data->temperature_error,
+               data->comm_failed ? "FAIL" : "OK");
     }
     
     return 0;
 }
 
 static int cmd_export_csv(int argc, char **argv) {
-    printf("# 배터리 히터 테스트 데이터 (CSV)\n");
-    printf("Time(s),Temperature(C),PWM_Duty(%%),Error(C),StepUp\n");
+    printf("# 배터리 히터 테스트 데이터 (확장 로깅 포함)\n");
+    printf("Time(s),Temperature(C),PWM_Duty(%%),Error(C),StepUp,CommFailed\n");
     
-    int total_count = log_full ? 100 : log_index;
+    int total_count = log_full ? MAX_LOG_ENTRIES : log_index;
     int start_idx = log_full ? log_index : 0;
     
     for (int i = 0; i < total_count; i++) {
-        int idx = (start_idx + i) % 100;
+        int idx = (start_idx + i) % MAX_LOG_ENTRIES;
         TestDataLog* data = &test_data_log[idx];
         
-        printf("%lu,%.2f,%d,%+.2f,%s\n",
+        printf("%lu,%.2f,%d,%+.2f,%s,%s\n",
                data->timestamp_ms / 1000, data->battery_temp,
                data->pwm_duty, data->temperature_error,
-               data->stepup_active ? "ON" : "OFF");
+               data->stepup_active ? "ON" : "OFF",
+               data->comm_failed ? "FAIL" : "OK");
     }
     
     return 0;
@@ -844,11 +958,127 @@ static int cmd_send_now(int argc, char **argv) {
     return 0;
 }
 
+static int cmd_logstats(int argc, char **argv) {
+    printf("\n=== 로깅 및 통신 통계 ===\n");
+    
+    // 로깅 통계
+    int total_entries = log_full ? MAX_LOG_ENTRIES : log_index;
+    printf("로그 엔트리: %d/%d개 (%.1f%% 사용)\n", 
+           total_entries, MAX_LOG_ENTRIES, 
+           (float)total_entries / MAX_LOG_ENTRIES * 100);
+    
+    // 메모리 사용량
+    size_t log_memory = sizeof(TestDataLog) * MAX_LOG_ENTRIES;
+    printf("로그 메모리: %zu bytes (%.1f KB)\n", 
+           log_memory, (float)log_memory / 1024);
+    
+    // 통신 통계 분석
+    int comm_failures = 0;
+    int comm_attempts = 0;
+    
+    int start_idx = log_full ? log_index : 0;
+    for (int i = 0; i < total_entries; i++) {
+        int idx = (start_idx + i) % MAX_LOG_ENTRIES;
+        TestDataLog* data = &test_data_log[idx];
+        
+        // 송신기 모드에서만 통신 시도 기록이 의미있음
+        if (current_mode == MODE_TRANSMITTER) {
+            if (i > 0 && (i % (data_send_interval_ms / 10000)) == 0) { // 전송 간격마다
+                comm_attempts++;
+                if (data->comm_failed) comm_failures++;
+            }
+        }
+    }
+    
+    // 전체 통신 통계
+    printf("총 통신 시도: %lu회\n", total_comm_attempts);
+    printf("통신 실패: %lu회\n", total_comm_failures);
+    if (total_comm_attempts > 0) {
+        printf("통신 성공률: %.1f%%\n", 
+               (float)(total_comm_attempts - total_comm_failures) / total_comm_attempts * 100);
+    }
+    
+    // 최근 통신 상태 (최근 10개 엔트리)
+    if (total_entries > 0) {
+        int recent_failures = 0;
+        int recent_start = (log_index - 10 + MAX_LOG_ENTRIES) % MAX_LOG_ENTRIES;
+        if (total_entries < 10) recent_start = 0;
+        
+        int check_count = total_entries < 10 ? total_entries : 10;
+        for (int i = 0; i < check_count; i++) {
+            int idx = (recent_start + i) % MAX_LOG_ENTRIES;
+            if (test_data_log[idx].comm_failed) recent_failures++;
+        }
+        
+        printf("최근 %d회 중 통신 실패: %d회\n", check_count, recent_failures);
+    }
+    
+    // 로깅 예상 지속시간
+    if (total_entries > 1) {
+        uint32_t first_time = test_data_log[log_full ? log_index : 0].timestamp_ms;
+        uint32_t last_time = test_data_log[(log_index - 1 + MAX_LOG_ENTRIES) % MAX_LOG_ENTRIES].timestamp_ms;
+        uint32_t duration_sec = (last_time - first_time) / 1000;
+        
+        printf("현재 로깅 기간: %lu초 (%.1f분)\n", 
+               duration_sec, (float)duration_sec / 60);
+        
+        if (!log_full) {
+            float avg_interval = (float)duration_sec / (total_entries - 1);
+            uint32_t remaining_entries = MAX_LOG_ENTRIES - total_entries;
+            uint32_t estimated_remaining_time = (uint32_t)(remaining_entries * avg_interval);
+            
+            printf("예상 추가 로깅 가능 시간: %lu초 (%.1f시간)\n",
+                   estimated_remaining_time, (float)estimated_remaining_time / 3600);
+        } else {
+            printf("로그 버퍼 가득참 - 순환 로깅 중\n");
+        }
+    }
+    
+    return 0;
+}
+
+static int cmd_antenna(int argc, char **argv) {
+    if (argc < 2) {
+        printf("현재 안테나: %s\n", getAntennaString(current_antenna));
+        printf("사용법: antenna <internal|external>\n");
+        printf("  internal - 내장 안테나 사용\n");
+        printf("  external - 외부 U.FL 안테나 사용\n");
+        return 0;
+    }
+    
+    antenna_type_t new_antenna;
+    
+    if (strcmp(argv[1], "internal") == 0) {
+        new_antenna = ANTENNA_INTERNAL;
+    } else if (strcmp(argv[1], "external") == 0) {
+        new_antenna = ANTENNA_EXTERNAL;
+    } else {
+        printf("잘못된 안테나 타입: %s\n", argv[1]);
+        return -1;
+    }
+    
+    if (new_antenna == current_antenna) {
+        printf("이미 %s 안테나를 사용 중입니다\n", getAntennaString(new_antenna));
+        return 0;
+    }
+    
+    printf("안테나 변경: %s → %s\n", getAntennaString(current_antenna), getAntennaString(new_antenna));
+    
+    setAntennaType(new_antenna);
+    saveAntennaType();
+    
+    printf("✅ %s 안테나로 설정 완료\n", getAntennaString(new_antenna));
+    printf("⚠️  WiFi/ESP-NOW 재시작이 필요할 수 있습니다\n");
+    
+    return 0;
+}
+
 static int cmd_help(int argc, char **argv) {
     printf("\n=== 통합 배터리 히터 시스템 명령어 ===\n");
     printf("\n🔧 시스템 제어:\n");
     printf("  mode <모드>     - 모드 전환 (heater/tx/rx)\n");
     printf("  info           - 현재 모드 및 상태 정보\n");
+    printf("  antenna <타입>  - 안테나 선택 (internal/external)\n");
     printf("  help           - 이 도움말 출력\n");
     
     printf("\n🔥 히터 제어 (heater/tx 모드):\n");
@@ -903,6 +1133,11 @@ extern "C" void app_main() {
     // 콘솔 명령어 등록
     register_unified_commands();
     
+    // 안테나 제어 초기화
+    if (!initAntennaControl()) {
+        ESP_LOGW(TAG, "안테나 제어 초기화 실패, 계속 진행...");
+    }
+    
     // 저장된 모드 로드
     system_mode_t saved_mode = loadSavedMode();
     
@@ -926,7 +1161,7 @@ extern "C" void app_main() {
     
     // 콘솔 루프
     char* line;
-    while ((line = esp_console_linenoise("> ")) != NULL) {
+    while ((line = linenoise("> ")) != NULL) {
         // 실시간 모니터링 중이면 개행
         if (real_time_monitoring) {
             printf("\n");
@@ -943,7 +1178,88 @@ extern "C" void app_main() {
             printf("명령어 실행 오류\n");
         }
         
-        linenoise_history_add(line);
+        linenoiseHistoryAdd(line);
         free(line);
+    }
+}
+
+// ===== 안테나 제어 함수 구현 =====
+
+bool initAntennaControl() {
+    ESP_LOGI(TAG, "안테나 제어 초기화...");
+    
+    // GPIO 설정
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << ANTENNA_SWITCH_PIN),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+    
+    esp_err_t ret = gpio_config(&io_conf);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "안테나 제어 GPIO 설정 실패: %s", esp_err_to_name(ret));
+        return false;
+    }
+    
+    // 저장된 안테나 설정 로드
+    current_antenna = loadAntennaType();
+    setAntennaType(current_antenna);
+    
+    ESP_LOGI(TAG, "✅ 안테나 제어 초기화 완료 - 현재: %s", getAntennaString(current_antenna));
+    return true;
+}
+
+void setAntennaType(antenna_type_t antenna) {
+    current_antenna = antenna;
+    
+    // GPIO 출력 설정
+    // LOW = 내장 안테나, HIGH = 외부 U.FL 안테나
+    gpio_set_level(ANTENNA_SWITCH_PIN, (antenna == ANTENNA_EXTERNAL) ? 1 : 0);
+    
+    ESP_LOGI(TAG, "안테나 설정: %s (GPIO%d = %d)", 
+             getAntennaString(antenna), ANTENNA_SWITCH_PIN, 
+             (antenna == ANTENNA_EXTERNAL) ? 1 : 0);
+}
+
+antenna_type_t getAntennaType() {
+    return current_antenna;
+}
+
+void saveAntennaType() {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open("heater_config", NVS_READWRITE, &nvs_handle);
+    if (err == ESP_OK) {
+        nvs_set_u8(nvs_handle, "antenna_type", (uint8_t)current_antenna);
+        nvs_commit(nvs_handle);
+        nvs_close(nvs_handle);
+        ESP_LOGI(TAG, "안테나 설정 저장: %s", getAntennaString(current_antenna));
+    }
+}
+
+antenna_type_t loadAntennaType() {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open("heater_config", NVS_READONLY, &nvs_handle);
+    if (err == ESP_OK) {
+        uint8_t saved_antenna = ANTENNA_INTERNAL;
+        err = nvs_get_u8(nvs_handle, "antenna_type", &saved_antenna);
+        nvs_close(nvs_handle);
+        
+        if (err == ESP_OK && (saved_antenna == ANTENNA_INTERNAL || saved_antenna == ANTENNA_EXTERNAL)) {
+            ESP_LOGI(TAG, "저장된 안테나 설정 로드: %s", getAntennaString((antenna_type_t)saved_antenna));
+            return (antenna_type_t)saved_antenna;
+        }
+    }
+    
+    ESP_LOGI(TAG, "저장된 안테나 설정 없음, 기본값 사용: %s", getAntennaString(ANTENNA_INTERNAL));
+    return ANTENNA_INTERNAL;
+}
+
+const char* getAntennaString(antenna_type_t antenna) {
+    switch (antenna) {
+        case ANTENNA_INTERNAL: return "내장 안테나";
+        case ANTENNA_EXTERNAL: return "외부 U.FL 안테나";
+        default: return "알 수 없음";
     }
 }

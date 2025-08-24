@@ -39,6 +39,10 @@
 #define BATTERY_HEATER_PWM_PIN      GPIO_NUM_2      // GPIO2 - 히터 PWM 출력
 #define STEPUP_CONVERTER_EN_PIN     GPIO_NUM_3      // GPIO3 - 5V 스텝업 컨버터 EN 제어
 
+// Xiao ESP32C6 안테나 제어 핀 설정
+#define ANTENNA_SWITCH_PIN          GPIO_NUM_14     // GPIO14 - 안테나 스위치 제어
+// 안테나 선택: LOW = 내장 안테나, HIGH = 외부 U.FL 안테나
+
 // 측정 간격 설정 (포천시 기후 맞춤)
 #define MEASUREMENT_INTERVAL_MS         5000        // 프로토타입용 (5초)
 #define PRODUCTION_SENSOR_INTERVAL_MS   3600000     // 센서 데이터 측정 (1시간)
