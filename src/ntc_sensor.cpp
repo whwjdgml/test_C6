@@ -57,6 +57,7 @@ bool NTCSensor::initADC() {
     // ADC1 초기화
     adc_oneshot_unit_init_cfg_t init_config1 = {
         .unit_id = ADC_UNIT_1,
+        .ulp_mode = ADC_ULP_MODE_DISABLE,
     };
     
     esp_err_t ret = adc_oneshot_new_unit(&init_config1, &adc1_handle);
@@ -80,6 +81,7 @@ bool NTCSensor::initADC() {
     // ADC 캘리브레이션
     adc_cali_curve_fitting_config_t cali_config = {
         .unit_id = ADC_UNIT_1,
+        .chan = adc_channel,
         .atten = ADC_ATTEN_DB_12,
         .bitwidth = ADC_BITWIDTH_12,
     };

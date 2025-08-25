@@ -6,6 +6,8 @@
 #include "sensor_types.h"
 #include "sensor_config.h"
 #include "ds3231_rtc.h"
+#include "ntc_sensor.h"
+#include "battery_heater.h"
 
 // Forward declarations
 class AHT20Sensor;

@@ -382,6 +382,7 @@ uint32_t DS3231_RTC::timeToUnixTimestamp(const rtc_time_t& time) {
     tm_time.tm_hour = time.hours;
     tm_time.tm_min = time.minutes;
     tm_time.tm_sec = time.seconds;
+    tm_time.tm_isdst = -1;  // DST 정보 자동 결정
     
     return (uint32_t)mktime(&tm_time);
 }

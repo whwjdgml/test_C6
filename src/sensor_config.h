@@ -33,11 +33,12 @@
 // DS3231 RTC 설정
 #define DS3231_ADDR 0x68
 
-// 배터리 히터 시스템 핀 설정 (Xiao ESP32C6)
-#define BATTERY_NTC_ADC_CHANNEL     ADC1_CHANNEL_0  // GPIO0 - NTC 온도센서 ADC 입력
+// 배터리 히터 시스템 핀 설정 (Xiao ESP32C6) - LP Core 호환
+#define BATTERY_NTC_ADC_CHANNEL     ADC_CHANNEL_0   // GPIO0 - NTC 온도센서 ADC 입력 (adc_channel_t 타입)
 #define BATTERY_NTC_POWER_PIN       GPIO_NUM_1      // GPIO1 - NTC 센서 전원 제어
-#define BATTERY_HEATER_PWM_PIN      GPIO_NUM_2      // GPIO2 - 히터 PWM 출력
-#define STEPUP_CONVERTER_EN_PIN     GPIO_NUM_3      // GPIO3 - 5V 스텝업 컨버터 EN 제어
+#define BATTERY_HEATER_PWM_PIN      GPIO_NUM_4      // GPIO4 - 스텝업 컨버터 EN 핀 PWM 제어 (LP Core 호환)
+#define STEPUP_CONVERTER_EN_PIN     GPIO_NUM_4      // GPIO4 - 동일한 핀 (PWM으로 EN 제어)
+// GPIO5 예비 (향후 확장용)
 
 // Xiao ESP32C6 안테나 제어 핀 설정
 #define ANTENNA_SWITCH_PIN          GPIO_NUM_14     // GPIO14 - 안테나 스위치 제어

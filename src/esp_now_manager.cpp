@@ -58,12 +58,27 @@ bool ESPNowManager::initWiFi() {
     
     // WiFi 초기화
     ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    
+    // event loop가 이미 존재하는지 확인
+    esp_err_t ret_event = esp_event_loop_create_default();
+    if (ret_event != ESP_OK && ret_event != ESP_ERR_INVALID_STATE) {
+        ESP_ERROR_CHECK(ret_event);
+    }
+    // WiFi가 이미 초기화되어 있는지 확인
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    esp_err_t ret_wifi = esp_wifi_init(&cfg);
+    if (ret_wifi != ESP_OK && ret_wifi != ESP_ERR_INVALID_STATE) {
+        ESP_ERROR_CHECK(ret_wifi);
+    }
+    
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_start());
+    
+    // WiFi 시작 (이미 시작된 경우 무시)
+    esp_err_t ret_start = esp_wifi_start();
+    if (ret_start != ESP_OK && ret_start != ESP_ERR_INVALID_STATE) {
+        ESP_ERROR_CHECK(ret_start);
+    }
     
     // 채널 1 고정 (ESP-NOW는 같은 채널에서만 통신 가능)
     ESP_ERROR_CHECK(esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE));
